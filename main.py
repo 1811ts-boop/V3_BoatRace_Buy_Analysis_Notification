@@ -37,14 +37,16 @@ OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 
 TIDE_CSV_NAME = "Tide_Master_2020_2026.csv"
 PROJECT_IDS = ['P0_SG', 'P1_G1_Elite', 'P3_General_Std', 'P4_Planning']
-MAX_WORKERS = 3  # ★IPバン対策：並列数を安全な水準に制限
+
+# ★罠解決：IPバン（DDoS判定）を防ぐための安全なスレッド数
+MAX_WORKERS = 3  
 
 # 🚀 【最終決定版】全システム共通・絶対不変のカテゴリ定義
 CATEGORIES_DEF = {
     'PlaceID': list(range(1, 25)),
     'Course_Type': [1, 2, 3, 4, 5],
     'Weather_Code': [0, 1, 2, 3, 4, 5, 6],
-    'Tide_Trend': [-1, 0, 1], # 下げ、止まり、上げ
+    'Tide_Trend': [-1, 0, 1], # 修正済：下げ、止まり、上げ
     'Boat_Number': [1, 2, 3, 4, 5, 6]
 }
 
@@ -53,7 +55,7 @@ PORTFOLIO = {
     1: [("P4_Planning", 3, "普通(40-60%)"), ("P4_Planning", 15, "普通(40-60%)"), ("P4_Planning", 8, "やや堅め(20-40%)"), ("P3_General_Std", 23, "やや荒れ(60-80%)")],
     2: [("P3_General_Std", 15, "普通(40-60%)"), ("P3_General_Std", 22, "やや堅め(20-40%)"), ("P4_Planning", 1, "普通(40-60%)"), ("P4_Planning", 5, "普通(40-60%)")],
     3: [("P4_Planning", 3, "普通(40-60%)"), ("P4_Planning", 24, "普通(40-60%)"), ("P4_Planning", 16, "やや堅め(20-40%)"), ("P3_General_Std", 16, "普通(40-60%)"), ("P4_Planning", 4, "やや荒れ(60-80%)"), ("P3_General_Std", 12, "超堅め(0-20%)"), ("P3_General_Std", 1, "普通(40-60%)"), ("P3_General_Std", 6, "超堅め(0-20%)")],
-    4: [],
+    4: [], # 魔の月は全休
     5: [("P3_General_Std", 17, "やや荒れ(60-80%)")],
     6: [("P3_General_Std", 8, "超堅め(0-20%)"), ("P3_General_Std", 7, "普通(40-60%)")],
     7: [("P4_Planning", 19, "普通(40-60%)"), ("P4_Planning", 8, "やや堅め(20-40%)"), ("P4_Planning", 18, "やや堅め(20-40%)")],
@@ -70,7 +72,7 @@ TRACK_ANGLES = {1: 163.6, 2: 101.6, 3: 17.8, 4: 355.6, 5: 273.4, 6: 187.0, 7: 24
 COURSE_TYPE_MAP = {24: 1, 18: 1, 21: 1, 19: 1, 13: 1, 10: 1, 5: 2, 6: 2, 7: 2, 8: 2, 9: 2, 1: 2, 12: 3, 15: 3, 16: 3, 17: 3, 20: 3, 23: 3, 2: 4, 4: 4, 14: 4, 11: 4, 22: 4, 3: 5}
 
 # =============================================================================
-# 2. Google Drive & API連携 (モデル自動ダウンロード)
+# 2. Google Drive & API連携 (インフラ対応)
 # =============================================================================
 def get_drive_service():
     if not GCP_SA_CREDENTIALS: return None
@@ -78,32 +80,34 @@ def get_drive_service():
     creds = service_account.Credentials.from_service_account_info(creds_dict)
     return build('drive', 'v3', credentials=creds)
 
-def download_file_by_name(service, file_name, save_dir="."):
+def download_latest_file_by_name(service, file_name, save_dir="."):
+    # ★罠解決：同名ファイル複数存在時の旧モデル取得バグを排除 (orderBy追加)
     query = f"name='{file_name}' and trashed=false"
-    res = service.files().list(q=query, fields="files(id, name)").execute()
+    res = service.files().list(q=query, orderBy="createdTime desc", fields="files(id, name)").execute()
     if not res.get('files'): return False
     
     file_id = res['files'][0]['id']
     req = service.files().get_media(fileId=file_id)
-    fh = io.FileIO(os.path.join(save_dir, file_name), 'wb')
-    downloader = MediaIoBaseDownload(fh, req)
-    done = False
-    while not done: _, done = downloader.next_chunk()
+    
+    # ★罠解決：FileIOのメモリリーク（リソース枯渇）を自動解放で防ぐ
+    with io.FileIO(os.path.join(save_dir, file_name), 'wb') as fh:
+        downloader = MediaIoBaseDownload(fh, req)
+        done = False
+        while not done: _, done = downloader.next_chunk()
     return True
 
 def prepare_ai_models(service):
-    """GitHub Actions環境に推論用モデルを動的ダウンロード"""
-    logger.info("🤖 AIモデル（.pkl）のダウンロードを開始します...")
+    logger.info("🤖 AIモデル（.pkl）の最新版をダウンロードします...")
     os.makedirs("Models_Stage1_V2", exist_ok=True)
     os.makedirs("Models_Stage2_V3", exist_ok=True)
     
-    download_file_by_name(service, TIDE_CSV_NAME)
+    download_latest_file_by_name(service, TIDE_CSV_NAME)
     
     for pid in PROJECT_IDS:
-        download_file_by_name(service, f"LGBM_Stage1_V2_{pid}.pkl", "Models_Stage1_V2")
-        download_file_by_name(service, f"LGBM_Stage2_1st_V3_{pid}.pkl", "Models_Stage2_V3")
-        download_file_by_name(service, f"LGBM_Stage2_2nd_V3_{pid}.pkl", "Models_Stage2_V3")
-        download_file_by_name(service, f"LGBM_Stage2_3rd_V3_{pid}.pkl", "Models_Stage2_V3")
+        download_latest_file_by_name(service, f"LGBM_Stage1_V2_{pid}.pkl", "Models_Stage1_V2")
+        download_latest_file_by_name(service, f"LGBM_Stage2_1st_V3_{pid}.pkl", "Models_Stage2_V3")
+        download_latest_file_by_name(service, f"LGBM_Stage2_2nd_V3_{pid}.pkl", "Models_Stage2_V3")
+        download_latest_file_by_name(service, f"LGBM_Stage2_3rd_V3_{pid}.pkl", "Models_Stage2_V3")
 
 def send_line_broadcast(msg):
     if not LINE_CHANNEL_ACCESS_TOKEN: return
@@ -111,16 +115,31 @@ def send_line_broadcast(msg):
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"}
     requests.post(url, headers=headers, json={"messages": [{"type": "text", "text": msg}]})
 
+# ★罠解決：OpenWeather APIのレートリミット（429エラー）超過を防ぐキャッシュ辞書
+WEATHER_CACHE = {}
+
 def fetch_weather(place_id, target_time_str):
     try:
-        hour, minute = map(int, target_time_str.split(':'))
-        now = TODAY_OBJ.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        hour = target_time_str.split(':')[0]
+        cache_key = f"{place_id}_{hour}" # 競艇場×時間単位でキャッシュ
+        
+        if cache_key in WEATHER_CACHE:
+            return WEATHER_CACHE[cache_key]
+
+        hour_int, minute_int = map(int, target_time_str.split(':'))
+        now = TODAY_OBJ.replace(hour=hour_int, minute=minute_int, second=0, microsecond=0)
         coords = PLACE_COORDS[place_id]
         url = f"https://api.openweathermap.org/data/2.5/forecast?lat={coords['lat']}&lon={coords['lon']}&appid={OPENWEATHER_API_KEY}&units=metric"
         res = requests.get(url).json()
         closest = min(res.get('list', []), key=lambda x: abs(x['dt'] - int(now.timestamp())))
         main = closest['weather'][0].get('main', 'Clear')
-        return float(closest['wind'].get('speed', 0.0)), float(closest['wind'].get('deg', 0.0)), (1 if main == 'Clear' else 2 if main == 'Clouds' else 3)
+        
+        ws = float(closest['wind'].get('speed', 0.0))
+        wd = float(closest['wind'].get('deg', 0.0))
+        wc = 1 if main == 'Clear' else 2 if main == 'Clouds' else 3
+        
+        WEATHER_CACHE[cache_key] = (ws, wd, wc)
+        return ws, wd, wc
     except: return 0.0, 0.0, 1
 
 # =============================================================================
@@ -135,7 +154,7 @@ def clean_rank_value(val):
 def fetch_soup(url, retries=3):
     for _ in range(retries):
         try:
-            time.sleep(1.0) # ★IPバン対策：インターバル確保
+            time.sleep(1.0) # IPバン回避用インターバル
             resp = requests.get(url, timeout=20)
             if resp.status_code == 200:
                 resp.encoding = resp.apparent_encoding
@@ -213,7 +232,7 @@ def scrape_today(today_obj):
     return pd.DataFrame(res)
 
 # =============================================================================
-# 4. 特徴量生成 ＆ バリデーションゲート（安全装置）
+# 4. 特徴量生成 ＆ バリデーションゲート
 # =============================================================================
 def get_rank_point(v): return {1:10, 2:8, 3:6, 4:4, 5:2, 6:1}.get(float(v), 0.0) if not pd.isna(v) and v else 0.0
 def safe_float(v, d=0.0):
@@ -229,11 +248,11 @@ def transform_for_inference_v3(df_raw, df_tide):
     for _, row in df_raw.iterrows():
         pid, rnum, dt = int(safe_float(row.get('PlaceID'))), int(safe_float(row.get('RaceNum'))), int(row.get('Date', 0))
         
-        # 🛡️【安全装置】データの健全性バリデーション
+        # 🛡️【安全装置】データの健全性バリデーション（サイレントエラーを完璧にブロック）
         win_nat_sum = sum(safe_float(row.get(f"R{b}_WinRate_National")) for b in range(1, 7))
-        if win_nat_sum < 15.0: # 6艇の勝率合計が15未満（平均2.5未満）なら取得エラーとみなす
+        if win_nat_sum < 15.0: 
             error_count += 1
-            logger.warning(f"⚠️ {pid}場 {rnum}R: 勝率データ異常 (Sum: {win_nat_sum:.1f})。サイレントエラーを防止しスキップします。")
+            logger.warning(f"⚠️ {pid}場 {rnum}R: 勝率データ異常。推論をスキップします。")
             continue
 
         sched = str(row.get('Scheduled_Time', '12:00'))
@@ -290,7 +309,7 @@ def transform_for_inference_v3(df_raw, df_tide):
             })
             
     if error_count > 0:
-        send_line_broadcast(f"⚠️【警告】スクレイピングデータに異常を検知しました（{error_count}レース）。誤推論を防ぐため該当レースをスキップしました。")
+        send_line_broadcast(f"⚠️【警告】スクレイピングデータ異常（{error_count}レース）。誤推論を防ぐためスキップしました。")
         
     return pd.DataFrame(fs1), pd.DataFrame(fs2)
 
@@ -302,10 +321,10 @@ def get_rough_cat(p): return "超堅め(0-20%)" if p < 0.2 else "やや堅め(20
 def run_ai_and_notify_v3(df_s1, df_s2):
     t_cond = PORTFOLIO.get(TODAY_OBJ.month, [])
     if not t_cond:
-        logger.info("本日はV3ポートフォリオの稼働対象月ではありません。")
+        logger.info("本日は稼働対象月ではありません。")
         return
 
-    # ★【絶対不変】学習時と完全に同じカテゴリ定義を適用（ハック不要の純粋推論）
+    # 【絶対不変】カテゴリ固定
     for c, cats in CATEGORIES_DEF.items():
         if c in df_s1.columns: df_s1[c] = pd.Categorical(df_s1[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
         if c in df_s2.columns: df_s2[c] = pd.Categorical(df_s2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
@@ -316,14 +335,19 @@ def run_ai_and_notify_v3(df_s1, df_s2):
         if ds1.empty: continue
         try:
             with open(f"Models_Stage1_V2/LGBM_Stage1_V2_{pid}.pkl", 'rb') as f: m1 = pickle.load(f)
-            ds1['Stage1_Rough_Prob'] = m1.predict(ds1.drop(columns=['Race_ID', 'Project_ID_Calc']))
+            # Stage 1 推論
+            ds1['Stage1_Rough_Prob'] = m1.predict(ds1.drop(columns=['Race_ID', 'Project_ID_Calc'])[m1.feature_name()])
             
             ds2 = df_s2[df_s2['Project_ID_Calc'] == pid].merge(ds1[['Race_ID', 'Stage1_Rough_Prob']], on='Race_ID', how='inner')
             with open(f"Models_Stage2_V3/LGBM_Stage2_1st_V3_{pid}.pkl", 'rb') as f: m2_1 = pickle.load(f)
             with open(f"Models_Stage2_V3/LGBM_Stage2_2nd_V3_{pid}.pkl", 'rb') as f: m2_2 = pickle.load(f)
             with open(f"Models_Stage2_V3/LGBM_Stage2_3rd_V3_{pid}.pkl", 'rb') as f: m2_3 = pickle.load(f)
             
-            X2 = ds2.drop(columns=['Race_ID', 'Project_ID_Calc'])
+            X2_raw = ds2.drop(columns=['Race_ID', 'Project_ID_Calc'])
+            # ★罠解決：カラムの順序を学習時と強制的に完全一致させる（推論崩壊の防止）
+            X2 = X2_raw[m2_1.feature_name()]
+            
+            # Stage 2 推論
             ds2['P1'], ds2['P2'], ds2['P3'] = m2_1.predict(X2), m2_2.predict(X2), m2_3.predict(X2)
             
             for rid, grp in ds2.groupby('Race_ID', sort=False):
