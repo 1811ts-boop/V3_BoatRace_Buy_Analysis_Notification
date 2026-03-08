@@ -30,7 +30,6 @@ jobs:
         env:
           TZ: 'Asia/Tokyo' # OSレベルの時計を日本時間に強制固定
           GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
         run: |
