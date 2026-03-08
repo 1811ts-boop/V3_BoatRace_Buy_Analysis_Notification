@@ -397,10 +397,10 @@ def run_ai_and_notify_v3(df_s1, df_s2):
     # 🚨【修正箇所】学習時と完全に一致するカテゴリ定義を強制適用
     cat_definitions = {
         'PlaceID': list(range(1, 25)), 
-        'Course_Type': [1, 2, 3, 4, 5],
-        'Weather_Code': [0, 1, 2, 3, 4, 5, 6], 
-        'Tide_Trend': [0, 1, 2, 3, 4, 5, 6],
-        'Boat_Number': [1, 2, 3, 4, 5, 6]
+        'Course_Type': list(range(1, 6)),
+        'Weather_Code': list(range(1, 4)), # [1, 2, 3] 
+        'Tide_Trend': [-1, 0, 1],          # [-1, 0, 1]
+        'Boat_Number': list(range(1, 7))
     }
     
     for col, cats in cat_definitions.items():
