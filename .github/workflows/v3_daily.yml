@@ -1,0 +1,37 @@
+name: V3 Daily BoatRace AI
+
+on:
+  schedule:
+    # 毎日日本時間 朝6:30 に実行（UTCで前日の21:30）
+    - cron: '30 21 * * *'
+  workflow_dispatch: # 手動実行用のボタン（テスト実行時に使います）
+
+jobs:
+  run-v3-ai:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # 万が一の通信無限待機を防ぐ安全装置
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4 # 最新の安定バージョンに更新
+
+      - name: Set up Python
+        uses: actions/setup-python@v5 # 最新バージョンに更新
+        with:
+          python-version: '3.10'
+          cache: 'pip' # 毎回のライブラリDLを省略し高速化・安定化
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy lightgbm requests beautifulsoup4 google-api-python-client google-auth-httplib2 google-auth-oauthlib
+
+      - name: Run V3 Daily Script
+        env:
+          TZ: 'Asia/Tokyo' # OSレベルの時計を日本時間に強制固定
+          GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+        run: |
+          python main.py
