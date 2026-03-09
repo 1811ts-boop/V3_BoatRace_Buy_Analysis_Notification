@@ -110,10 +110,24 @@ def prepare_ai_models(service):
         download_latest_file_by_name(service, f"LGBM_Stage2_3rd_V3_{pid}.pkl", "Models_Stage2_V3")
 
 def send_line_broadcast(msg):
-    if not LINE_CHANNEL_ACCESS_TOKEN: return
+    if not LINE_CHANNEL_ACCESS_TOKEN:
+        logger.warning("⚠️ LINEトークンが環境変数に設定されていません。")
+        return
     url = "https://api.line.me/v2/bot/message/broadcast"
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"}
-    requests.post(url, headers=headers, json={"messages": [{"type": "text", "text": msg}]})
+    
+    # ▼ ここから下を丸ごと置き換えます ▼
+    try:
+        # 古い1行をここで実行し、結果を「resp」という変数で受け取るようにしています
+        resp = requests.post(url, headers=headers, json={"messages": [{"type": "text", "text": msg}]})
+        
+        # ステータスコードが200（成功）以外なら警告、200なら成功をログ出力
+        if resp.status_code != 200:
+            logger.error(f"❌ LINE API Error: Status {resp.status_code}, Response: {resp.text}")
+        else:
+            logger.info("✅ LINEへのメッセージ送信に成功しました。")
+    except Exception as e:
+        logger.error(f"❌ LINEリクエスト送信中に例外が発生しました: {e}")
 
 # ★罠解決：OpenWeather APIのレートリミット（429エラー）超過を防ぐキャッシュ辞書
 WEATHER_CACHE = {}
@@ -352,7 +366,10 @@ def get_rough_cat(p): return "超堅め(0-20%)" if p < 0.2 else "やや堅め(20
 def run_ai_and_notify_v3(df_s1, df_s2):
     t_cond = PORTFOLIO.get(TODAY_OBJ.month, [])
     if not t_cond:
-        logger.info("本日は稼働対象月ではありません。")
+        # 休みの月もLINEに通知する
+        msg = f"🤖 【V3 真・聖杯AI】\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n今月（{TODAY_OBJ.month}月）は魔の月のため稼働全休です🍵"
+        logger.info("本日は稼働対象月ではありません。LINEに全休通知を送ります。")
+        send_line_broadcast(msg)
         return
 
     CATEGORIES_DEF_S1 = {
@@ -406,14 +423,17 @@ def run_ai_and_notify_v3(df_s1, df_s2):
             logger.error(f"AI Error ({pid}): {e}")
 
     if not buys:
-        logger.info("本日は条件合致レースがありませんでした。")
+        # 合致レースがない場合もLINEに通知する
+        msg = f"🤖 【V3 真・聖杯AI】\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n本日は「新・聖杯カレンダー」の条件に合致する堅守レースがありませんでした🙅‍♂️"
+        logger.info("本日は条件合致レースがありませんでした。LINEに通知します。")
+        send_line_broadcast(msg)
     else:
         msg = f"🤖 【V3 真・聖杯AI】\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n✅ 合致：{len(buys)}レース\n"
         for b in sorted(buys, key=lambda x: (x['p'], x['r'])):
             place_name = JCD_MAP.get(f"{b['p']:02d}", "不明")
             msg += f"\n🚤 {place_name} {b['r']}R\n【{b['c']}】\n◎ {b['b'][0]}\n○ {b['b'][1]}\n▲ {b['b'][2]}\n△ {b['b'][3]}\n"
         send_line_broadcast(msg)
-        logger.info(f"送信完了: {len(buys)}レース")
+        logger.info(f"買い目送信完了: {len(buys)}レース")
         
 def main():
     logger.info("V3 System Start (Robust Edition)")
