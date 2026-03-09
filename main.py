@@ -368,12 +368,15 @@ def run_ai_and_notify_v3(df_s1, df_s2):
         try:
             with open(f"Models_Stage1_V2/LGBM_Stage1_V2_{pid}.pkl", 'rb') as f: m1 = pickle.load(f)
             
-            # 🛡️ 対策1: Stage 1 推論の直前でカテゴリ型を強制適用
-            X1 = ds1.drop(columns=['Race_ID', 'Project_ID_Calc'])[m1.feature_name()]
+            # 🛡️ 究極対策1: カテゴリ型を「LightGBMが内部で使う数値（.codes）」に直接変換し、型チェックを無効化
+            X1 = ds1.drop(columns=['Race_ID', 'Project_ID_Calc'])[m1.feature_name()].copy()
             for c, cats in CATEGORIES_DEF_S1.items():
                 if c in X1.columns:
-                    X1[c] = pd.Categorical(X1[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
-                    
+                    # pd.Categoricalの末尾に .codes を付けて純粋な整数配列にする
+                    X1[c] = pd.Categorical(X1[c].fillna(cats[0]).astype(int), categories=cats, ordered=False).codes
+            
+            # データフレーム全体をただのfloat型として渡し、AIの型チェックを完全にスルーさせる
+            X1 = X1.astype(float)
             ds1['Stage1_Rough_Prob'] = m1.predict(X1)
             
             ds2 = df_s2[df_s2['Project_ID_Calc'] == pid].merge(ds1[['Race_ID', 'Stage1_Rough_Prob']], on='Race_ID', how='inner')
@@ -381,12 +384,13 @@ def run_ai_and_notify_v3(df_s1, df_s2):
             with open(f"Models_Stage2_V3/LGBM_Stage2_2nd_V3_{pid}.pkl", 'rb') as f: m2_2 = pickle.load(f)
             with open(f"Models_Stage2_V3/LGBM_Stage2_3rd_V3_{pid}.pkl", 'rb') as f: m2_3 = pickle.load(f)
             
-            # 🛡️ 対策2: Stage 2 推論の直前（merge後）にカテゴリ型を強制適用
-            X2 = ds2.drop(columns=['Race_ID', 'Project_ID_Calc'])[m2_1.feature_name()]
+            # 🛡️ 究極対策2: Stage 2も同様に内部コード化
+            X2 = ds2.drop(columns=['Race_ID', 'Project_ID_Calc'])[m2_1.feature_name()].copy()
             for c, cats in CATEGORIES_DEF.items():
                 if c in X2.columns:
-                    X2[c] = pd.Categorical(X2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
+                    X2[c] = pd.Categorical(X2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False).codes
                     
+            X2 = X2.astype(float)
             ds2['P1'], ds2['P2'], ds2['P3'] = m2_1.predict(X2), m2_2.predict(X2), m2_3.predict(X2)
             
             for rid, grp in ds2.groupby('Race_ID', sort=False):
