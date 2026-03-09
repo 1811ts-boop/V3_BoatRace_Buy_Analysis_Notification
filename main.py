@@ -234,12 +234,24 @@ def scrape_today(today_obj):
 # =============================================================================
 # 4. 特徴量生成 ＆ バリデーションゲート
 # =============================================================================
-def get_rank_point(v): return {1:10, 2:8, 3:6, 4:4, 5:2, 6:1}.get(float(v), 0.0) if not pd.isna(v) and v else 0.0
-def safe_float(v, d=0.0):
-    try: return float(v) if not pd.isna(v) and v else d
+def safe_float(val, default=0.0):
+    if pd.isna(val) or val == "" or val is None: return default
+    try: return float(val)
     except ValueError:
-        c = re.sub(r'[^\d.-]', '', str(v))
-        return float(c) if c not in ('', '-', '.') else d
+        s = str(val).strip().translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+        clean_val = re.sub(r'[^\d.-]', '', s)
+        if clean_val in ('', '-', '.', '-.'): return default
+        try: return float(clean_val)
+        except ValueError: return default
+
+def get_rank_point_s1(rank_val):
+    if pd.isna(rank_val) or rank_val == "" or rank_val is None: return -5.0
+    r = safe_float(rank_val, 99)
+    return {1:10, 2:8, 3:6, 4:4, 5:2, 6:1}.get(r, -5.0)
+
+def get_rank_point_s2(v): 
+    r = safe_float(v, 99)
+    return {1:10, 2:8, 3:6, 4:4, 5:2, 6:1}.get(r, 0.0)
 
 def transform_for_inference_v3(df_raw, df_tide):
     fs1, fs2 = [], []
@@ -248,7 +260,7 @@ def transform_for_inference_v3(df_raw, df_tide):
     for _, row in df_raw.iterrows():
         pid, rnum, dt = int(safe_float(row.get('PlaceID'))), int(safe_float(row.get('RaceNum'))), int(row.get('Date', 0))
         
-        # 🛡️【安全装置】データの健全性バリデーション（サイレントエラーを完璧にブロック）
+        # 🛡️ バリデーション
         win_nat_sum = sum(safe_float(row.get(f"R{b}_WinRate_National")) for b in range(1, 7))
         if win_nat_sum < 15.0: 
             error_count += 1
@@ -273,16 +285,35 @@ def transform_for_inference_v3(df_raw, df_tide):
             m2 = safe_float(row.get(f"R{b}_Motor_2Ren"))
             ast = safe_float(row.get(f"R{b}_Avg_ST"), 0.17)
             
-            ss, vs, mm, cr, c_rank = 0, 0, 0, 0, 0
+            ss, vs, mm_s1, mm_s2, cr, c_rank = 0, 0, 0, 0, 0, 0
             for i in range(1, 15):
-                pst, prk, pc = safe_float(row.get(f"Boat{b}_Past_{i}_ST")), safe_float(row.get(f"Boat{b}_Past_{i}_Rank")), safe_float(row.get(f"Boat{b}_Past_{i}_Course"))
+                raw_pst = row.get(f"Boat{b}_Past_{i}_ST")
+                raw_prk = row.get(f"Boat{b}_Past_{i}_Rank")
+                raw_pc = row.get(f"Boat{b}_Past_{i}_Course")
+
+                pst = safe_float(raw_pst)
+                prk = safe_float(raw_prk)
+                pc = safe_float(raw_pc)
+                
+                w = max(0.2, (15 - i) * 0.1)
+                
+                # ★修正：Stage1とStage2で異なるロジックを完全再現
+                mm_s1 += get_rank_point_s1(raw_prk) * w
+                if prk > 0: mm_s2 += get_rank_point_s2(raw_prk) * w
+
                 if pst > 0: ss += pst; vs += 1
-                if prk > 0: mm += get_rank_point(prk) * max(0.2, (15 - i) * 0.1)
                 if pc == b and prk > 0: cr += 1; c_rank += prk
             
             rst = (ss / vs) if vs > 0 else ast
-            rpwr = wn + (wl * 0.5) + (m2 / 10.0) + ((mm / 14.0) * 0.3) - (rst * 10)
-            bdata[b] = {'pwr': rpwr, 'st': rst, 'wn': wn, 'wl': wl, 'm2': m2, 'fc': safe_float(row.get(f"R{b}_F_Count")), 'wt': safe_float(row.get(f"R{b}_Weight"), 51.0), 'mm': mm, 'cr': cr, 'crk': (c_rank / cr) if cr > 0 else 3.5}
+            avg_mm_s1 = mm_s1 / 14.0
+            rpwr = wn + (wl * 0.5) + (m2 / 10.0) + (avg_mm_s1 * 0.3) - (rst * 10)
+            
+            bdata[b] = {
+                'pwr': rpwr, 'st': rst, 'wn': wn, 'wl': wl, 'm2': m2, 
+                'fc': safe_float(row.get(f"R{b}_F_Count")), 
+                'wt': safe_float(row.get(f"R{b}_Weight"), 51.0), 
+                'mm_s2': mm_s2, 'cr': cr, 'crk': (c_rank / cr) if cr > 0 else 3.5
+            }
             
         fs1.append({
             'Race_ID': f"{dt}_{pid}_{rnum}", 'Project_ID_Calc': row.get('Project_ID'), 'PlaceID': pid,
@@ -302,7 +333,7 @@ def transform_for_inference_v3(df_raw, df_tide):
                 'Month_Cos': math.cos(2 * math.pi * int(str(dt)[4:6]) / 12.0), 'Tournament_Day': safe_float(row.get('Tournament_Day'), 1.0),
                 'Boat_WinRate': bdata[b]['wn'], 'Boat_WinRate_Local': bdata[b]['wl'], 'Boat_Motor': bdata[b]['m2'],
                 'Boat_Weight': bdata[b]['wt'], 'F_Count': bdata[b]['fc'], 'Recent_Avg_ST': bdata[b]['st'],
-                'Momentum_Score': bdata[b]['mm'], 'Target_Course_Runs': bdata[b]['cr'], 'Target_Course_AvgRank': bdata[b]['crk'],
+                'Momentum_Score': bdata[b]['mm_s2'], 'Target_Course_Runs': bdata[b]['cr'], 'Target_Course_AvgRank': bdata[b]['crk'],
                 'Inside_F_Count': bdata[ib]['fc'], 'ST_Advantage_Inside': bdata[ib]['st'] - bdata[b]['st'],
                 'ST_Advantage_Outside': bdata[ob]['st'] - bdata[b]['st'], 'WinRate_Diff_Inside': bdata[b]['wn'] - bdata[ib]['wn'],
                 'Motor_Diff_Inside': bdata[b]['m2'] - bdata[ib]['m2']
@@ -324,9 +355,17 @@ def run_ai_and_notify_v3(df_s1, df_s2):
         logger.info("本日は稼働対象月ではありません。")
         return
 
-    # 【絶対不変】カテゴリ固定
-    for c, cats in CATEGORIES_DEF.items():
+    # ★修正：Stage1専用とStage2専用のカテゴリを分離して適用
+    CATEGORIES_DEF_S1 = {
+        'Course_Type': [1, 2, 3, 4, 5],
+        'Weather_Code': [1, 2, 3], 
+        'Tide_Trend': [-1, 0, 1]
+    }
+    
+    for c, cats in CATEGORIES_DEF_S1.items():
         if c in df_s1.columns: df_s1[c] = pd.Categorical(df_s1[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
+        
+    for c, cats in CATEGORIES_DEF.items():
         if c in df_s2.columns: df_s2[c] = pd.Categorical(df_s2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
     
     buys = []
@@ -344,7 +383,6 @@ def run_ai_and_notify_v3(df_s1, df_s2):
             with open(f"Models_Stage2_V3/LGBM_Stage2_3rd_V3_{pid}.pkl", 'rb') as f: m2_3 = pickle.load(f)
             
             X2_raw = ds2.drop(columns=['Race_ID', 'Project_ID_Calc'])
-            # ★罠解決：カラムの順序を学習時と強制的に完全一致させる（推論崩壊の防止）
             X2 = X2_raw[m2_1.feature_name()]
             
             # Stage 2 推論
@@ -367,10 +405,12 @@ def run_ai_and_notify_v3(df_s1, df_s2):
     else:
         msg = f"🤖 【V3 真・聖杯AI】\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n✅ 合致：{len(buys)}レース\n"
         for b in sorted(buys, key=lambda x: (x['p'], x['r'])):
-            msg += f"\n🚤 {JCD_MAP.get(f'{b['p']:02d}')} {b['r']}R\n【{b['c']}】\n◎ {b['b'][0]}\n○ {b['b'][1]}\n▲ {b['b'][2]}\n△ {b['b'][3]}\n"
+            # ★修正：構文エラー回避
+            place_name = JCD_MAP.get(f"{b['p']:02d}", "不明")
+            msg += f"\n🚤 {place_name} {b['r']}R\n【{b['c']}】\n◎ {b['b'][0]}\n○ {b['b'][1]}\n▲ {b['b'][2]}\n△ {b['b'][3]}\n"
         send_line_broadcast(msg)
         logger.info(f"送信完了: {len(buys)}レース")
-
+        
 def main():
     logger.info("V3 System Start (Robust Edition)")
     srv = get_drive_service()
