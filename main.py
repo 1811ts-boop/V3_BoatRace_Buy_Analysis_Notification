@@ -355,18 +355,11 @@ def run_ai_and_notify_v3(df_s1, df_s2):
         logger.info("本日は稼働対象月ではありません。")
         return
 
-    # ★修正：Stage1専用とStage2専用のカテゴリを分離して適用
     CATEGORIES_DEF_S1 = {
         'Course_Type': [1, 2, 3, 4, 5],
         'Weather_Code': [1, 2, 3], 
         'Tide_Trend': [-1, 0, 1]
     }
-    
-    for c, cats in CATEGORIES_DEF_S1.items():
-        if c in df_s1.columns: df_s1[c] = pd.Categorical(df_s1[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
-        
-    for c, cats in CATEGORIES_DEF.items():
-        if c in df_s2.columns: df_s2[c] = pd.Categorical(df_s2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
     
     buys = []
     for pid in PROJECT_IDS:
@@ -374,18 +367,26 @@ def run_ai_and_notify_v3(df_s1, df_s2):
         if ds1.empty: continue
         try:
             with open(f"Models_Stage1_V2/LGBM_Stage1_V2_{pid}.pkl", 'rb') as f: m1 = pickle.load(f)
-            # Stage 1 推論
-            ds1['Stage1_Rough_Prob'] = m1.predict(ds1.drop(columns=['Race_ID', 'Project_ID_Calc'])[m1.feature_name()])
+            
+            # 🛡️ 対策1: Stage 1 推論の直前でカテゴリ型を強制適用
+            X1 = ds1.drop(columns=['Race_ID', 'Project_ID_Calc'])[m1.feature_name()]
+            for c, cats in CATEGORIES_DEF_S1.items():
+                if c in X1.columns:
+                    X1[c] = pd.Categorical(X1[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
+                    
+            ds1['Stage1_Rough_Prob'] = m1.predict(X1)
             
             ds2 = df_s2[df_s2['Project_ID_Calc'] == pid].merge(ds1[['Race_ID', 'Stage1_Rough_Prob']], on='Race_ID', how='inner')
             with open(f"Models_Stage2_V3/LGBM_Stage2_1st_V3_{pid}.pkl", 'rb') as f: m2_1 = pickle.load(f)
             with open(f"Models_Stage2_V3/LGBM_Stage2_2nd_V3_{pid}.pkl", 'rb') as f: m2_2 = pickle.load(f)
             with open(f"Models_Stage2_V3/LGBM_Stage2_3rd_V3_{pid}.pkl", 'rb') as f: m2_3 = pickle.load(f)
             
-            X2_raw = ds2.drop(columns=['Race_ID', 'Project_ID_Calc'])
-            X2 = X2_raw[m2_1.feature_name()]
-            
-            # Stage 2 推論
+            # 🛡️ 対策2: Stage 2 推論の直前（merge後）にカテゴリ型を強制適用
+            X2 = ds2.drop(columns=['Race_ID', 'Project_ID_Calc'])[m2_1.feature_name()]
+            for c, cats in CATEGORIES_DEF.items():
+                if c in X2.columns:
+                    X2[c] = pd.Categorical(X2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
+                    
             ds2['P1'], ds2['P2'], ds2['P3'] = m2_1.predict(X2), m2_2.predict(X2), m2_3.predict(X2)
             
             for rid, grp in ds2.groupby('Race_ID', sort=False):
@@ -405,7 +406,6 @@ def run_ai_and_notify_v3(df_s1, df_s2):
     else:
         msg = f"🤖 【V3 真・聖杯AI】\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n✅ 合致：{len(buys)}レース\n"
         for b in sorted(buys, key=lambda x: (x['p'], x['r'])):
-            # ★修正：構文エラー回避
             place_name = JCD_MAP.get(f"{b['p']:02d}", "不明")
             msg += f"\n🚤 {place_name} {b['r']}R\n【{b['c']}】\n◎ {b['b'][0]}\n○ {b['b'][1]}\n▲ {b['b'][2]}\n△ {b['b'][3]}\n"
         send_line_broadcast(msg)
