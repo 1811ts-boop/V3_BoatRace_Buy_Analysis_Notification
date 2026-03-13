@@ -378,7 +378,7 @@ def run_ai_and_notify_v3(df_s1, df_s2):
     }
     
     buys = []
-    debug_logs = {}  # 🔍 デバッグログ用の箱を用意
+    debug_logs = {}
 
     for pid in PROJECT_IDS:
         ds1 = df_s1[df_s1['Project_ID_Calc'] == pid].copy()
@@ -387,11 +387,16 @@ def run_ai_and_notify_v3(df_s1, df_s2):
             with open(f"Models_Stage1_V2/LGBM_Stage1_V2_{pid}.pkl", 'rb') as f: m1 = pickle.load(f)
             
             X1 = ds1.drop(columns=['Race_ID', 'Project_ID_Calc'])[m1.feature_name()].copy()
+            
+            # 🛡️ 修正箇所1：数値はfloatに、カテゴリはColabと全く同じCategorical型にする
+            for c in X1.columns:
+                if c not in CATEGORIES_DEF_S1: X1[c] = X1[c].astype(float)
+                
             for c, cats in CATEGORIES_DEF_S1.items():
                 if c in X1.columns:
-                    X1[c] = pd.Categorical(X1[c].fillna(cats[0]).astype(int), categories=cats, ordered=False).codes
+                    X1[c] = pd.Categorical(X1[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
+            # ------------------------------------------------------------------
             
-            X1 = X1.astype(float)
             ds1['Stage1_Rough_Prob'] = m1.predict(X1)
             
             ds2 = df_s2[df_s2['Project_ID_Calc'] == pid].merge(ds1[['Race_ID', 'Stage1_Rough_Prob']], on='Race_ID', how='inner')
@@ -400,11 +405,16 @@ def run_ai_and_notify_v3(df_s1, df_s2):
             with open(f"Models_Stage2_V3/LGBM_Stage2_3rd_V3_{pid}.pkl", 'rb') as f: m2_3 = pickle.load(f)
             
             X2 = ds2.drop(columns=['Race_ID', 'Project_ID_Calc'])[m2_1.feature_name()].copy()
+            
+            # 🛡️ 修正箇所2：Stage 2も同様にCategorical型を維持する
+            for c in X2.columns:
+                if c not in CATEGORIES_DEF: X2[c] = X2[c].astype(float)
+
             for c, cats in CATEGORIES_DEF.items():
                 if c in X2.columns:
-                    X2[c] = pd.Categorical(X2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False).codes
+                    X2[c] = pd.Categorical(X2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
+            # ------------------------------------------------------------------
                     
-            X2 = X2.astype(float)
             ds2['P1'], ds2['P2'], ds2['P3'] = m2_1.predict(X2), m2_2.predict(X2), m2_3.predict(X2)
             
             for rid, grp in ds2.groupby('Race_ID', sort=False):
@@ -413,11 +423,9 @@ def run_ai_and_notify_v3(df_s1, df_s2):
                 rnum = int(rid.split('_')[2])
                 cat = get_rough_cat(grp['Stage1_Rough_Prob'].iloc[0])
                 
-                # 🔍 デバッグログに全レースの推論結果を記録
                 if plid not in debug_logs: debug_logs[plid] = []
                 debug_logs[plid].append({'rnum': rnum, 'pid': pid, 'cat': cat})
 
-                # 条件合致チェック
                 if not any(pid == tp and plid == tpl and cat == tc for tp, tpl, tc in t_cond): continue
                 
                 p1, p2, p3 = {r['Boat_Number']: r['P1'] for _, r in grp.iterrows()}, {r['Boat_Number']: r['P2'] for _, r in grp.iterrows()}, {r['Boat_Number']: r['P3'] for _, r in grp.iterrows()}
@@ -426,33 +434,24 @@ def run_ai_and_notify_v3(df_s1, df_s2):
         except Exception as e: 
             logger.error(f"AI Error ({pid}): {e}")
 
-    # 📊 ====================================================
-    # ここでデバッグログ（AI推論レポート）をGitHub Actionsのログに出力
+    # 📊 デバッグログ出力
     logger.info("📊 === AI推論結果の詳細レポート ===")
     for plid in sorted(debug_logs.keys()):
         place_name = JCD_MAP.get(f"{plid:02d}", "不明")
         races = sorted(debug_logs[plid], key=lambda x: x['rnum'])
-        
-        # 同じ競艇場でも、プロジェクトID（一般戦/G1など）ごとに集計
         pid_groups = {}
         for r in races:
             pid_groups.setdefault(r['pid'], []).append(r)
             
         for p_id, p_races in pid_groups.items():
-            # この場・プロジェクトのターゲット条件をカレンダーから抽出
             target_cats = [tc for tp, tpl, tc in t_cond if tp == p_id and tpl == plid]
-            if target_cats:
-                target_str = f"ターゲット条件: {' / '.join(target_cats)}"
-            else:
-                target_str = "ターゲット条件: 設定なし（見送り対象）"
+            target_str = f"ターゲット条件: {' / '.join(target_cats)}" if target_cats else "ターゲット条件: 設定なし（見送り対象）"
                 
             logger.info(f"🚤 {place_name} ({p_id}) - 全{len(p_races)}レース分析完了 | {target_str}")
             for r in p_races:
-                # ターゲット条件と一致したか判定
                 match_mark = "✅ 条件クリア" if target_cats and r['cat'] in target_cats else "❌ スルー"
                 logger.info(f"   {r['rnum']:>2}R: {r['cat']} -> {match_mark}")
     logger.info("======================================")
-    # =======================================================
 
     if not buys:
         msg = f"🤖 【V3 真・聖杯AI】\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n本日は「新・聖杯カレンダー」の条件に合致する堅守レースがありませんでした🙅‍♂️"
