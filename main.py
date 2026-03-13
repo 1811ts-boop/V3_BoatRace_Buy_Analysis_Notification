@@ -361,7 +361,8 @@ def transform_for_inference_v3(df_raw, df_tide):
 # =============================================================================
 # 5. AI推論 ＆ LINE通知
 # =============================================================================
-def get_rough_cat(p): return "超堅め(0-20%)" if p < 0.2 else "やや堅め(20-40%)" if p < 0.4 else "普通(40-60%)" if p < 0.6 else "やや荒れ(60-80%)" if p < 0.8 else "大荒れ(80-100%)"
+def get_rough_cat(p): 
+    return "超堅め(0-20%)" if p < 0.2 else "やや堅め(20-40%)" if p < 0.4 else "普通(40-60%)" if p < 0.6 else "やや荒れ(60-80%)" if p < 0.8 else "大荒れ(80-100%)"
 
 def run_ai_and_notify_v3(df_s1, df_s2):
     t_cond = PORTFOLIO.get(TODAY_OBJ.month, [])
@@ -371,6 +372,7 @@ def run_ai_and_notify_v3(df_s1, df_s2):
         send_line_broadcast(msg)
         return
 
+    # Stage 1 用のカテゴリ定義（Colab学習時と完全一致）
     CATEGORIES_DEF_S1 = {
         'Course_Type': [1, 2, 3, 4, 5],
         'Weather_Code': [1, 2, 3], 
@@ -384,18 +386,22 @@ def run_ai_and_notify_v3(df_s1, df_s2):
         ds1 = df_s1[df_s1['Project_ID_Calc'] == pid].copy()
         if ds1.empty: continue
         try:
-            with open(f"Models_Stage1_V2/LGBM_Stage1_V2_{pid}.pkl", 'rb') as f: m1 = pickle.load(f)
+            with open(f"Models_Stage1_V2/LGBM_Stage1_V2_{pid}.pkl", 'rb') as f: 
+                m1 = pickle.load(f)
             
             X1 = ds1.drop(columns=['Race_ID', 'Project_ID_Calc'])[m1.feature_name()].copy()
             
-            # カテゴリをLightGBM内部の整数インデックス（.codes）に変換
+            # 🛡️ Stage 1: 王道のカテゴリ処理（NumPyバイパスを撤去）
+            for c in X1.columns:
+                if c not in CATEGORIES_DEF_S1: 
+                    X1[c] = X1[c].astype(float)
+                
             for c, cats in CATEGORIES_DEF_S1.items():
                 if c in X1.columns:
-                    X1[c] = pd.Categorical(X1[c].fillna(cats[0]).astype(int), categories=cats, ordered=False).codes
+                    X1[c] = pd.Categorical(X1[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
             
-            # 🔥 ここが究極の解決策：純粋なNumPy配列（float型）に変換してPandasの壁を突破する
-            X1_array = X1.astype(float).values
-            ds1['Stage1_Rough_Prob'] = m1.predict(X1_array)
+            # ✅ 環境同期により、Pandas DataFrameのまま安全に推論可能！
+            ds1['Stage1_Rough_Prob'] = m1.predict(X1)
             
             ds2 = df_s2[df_s2['Project_ID_Calc'] == pid].merge(ds1[['Race_ID', 'Stage1_Rough_Prob']], on='Race_ID', how='inner')
             with open(f"Models_Stage2_V3/LGBM_Stage2_1st_V3_{pid}.pkl", 'rb') as f: m2_1 = pickle.load(f)
@@ -404,14 +410,19 @@ def run_ai_and_notify_v3(df_s1, df_s2):
             
             X2 = ds2.drop(columns=['Race_ID', 'Project_ID_Calc'])[m2_1.feature_name()].copy()
             
-            # Stage 2も同様に内部整数（.codes）に変換
+            # 🛡️ Stage 2: 王道のカテゴリ処理（CATEGORIES_DEFは冒頭で定義済みのグローバル定数を使用）
+            for c in X2.columns:
+                if c not in CATEGORIES_DEF: 
+                    X2[c] = X2[c].astype(float)
+
             for c, cats in CATEGORIES_DEF.items():
                 if c in X2.columns:
-                    X2[c] = pd.Categorical(X2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False).codes
-            
-            # 🔥 Stage 2も純粋なNumPy配列化
-            X2_array = X2.astype(float).values
-            ds2['P1'], ds2['P2'], ds2['P3'] = m2_1.predict(X2_array), m2_2.predict(X2_array), m2_3.predict(X2_array)
+                    X2[c] = pd.Categorical(X2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
+                    
+            # ✅ 同様にPandas DataFrameのまま安全に推論可能！
+            ds2['P1'] = m2_1.predict(X2)
+            ds2['P2'] = m2_2.predict(X2)
+            ds2['P3'] = m2_3.predict(X2)
             
             for rid, grp in ds2.groupby('Race_ID', sort=False):
                 if len(grp) != 6: continue
@@ -424,7 +435,9 @@ def run_ai_and_notify_v3(df_s1, df_s2):
 
                 if not any(pid == tp and plid == tpl and cat == tc for tp, tpl, tc in t_cond): continue
                 
-                p1, p2, p3 = {r['Boat_Number']: r['P1'] for _, r in grp.iterrows()}, {r['Boat_Number']: r['P2'] for _, r in grp.iterrows()}, {r['Boat_Number']: r['P3'] for _, r in grp.iterrows()}
+                p1 = {r['Boat_Number']: r['P1'] for _, r in grp.iterrows()}
+                p2 = {r['Boat_Number']: r['P2'] for _, r in grp.iterrows()}
+                p3 = {r['Boat_Number']: r['P3'] for _, r in grp.iterrows()}
                 sc = {f"{p[0]}-{p[1]}-{p[2]}": p1[p[0]] * p2[p[1]] * p3[p[2]] for p in itertools.permutations([1,2,3,4,5,6], 3)}
                 buys.append({'p': plid, 'r': rnum, 'c': cat, 'b': [x[0] for x in sorted(sc.items(), key=lambda x: x[1], reverse=True)[:4]]})
         except Exception as e: 
