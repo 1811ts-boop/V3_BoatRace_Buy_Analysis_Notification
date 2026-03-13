@@ -1,6 +1,6 @@
-pandas
+pandas==2.2.2
 numpy
-lightgbm
+lightgbm==4.6.0
 requests
 beautifulsoup4
 google-api-python-client
