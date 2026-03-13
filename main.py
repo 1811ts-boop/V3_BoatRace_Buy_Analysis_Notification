@@ -388,16 +388,14 @@ def run_ai_and_notify_v3(df_s1, df_s2):
             
             X1 = ds1.drop(columns=['Race_ID', 'Project_ID_Calc'])[m1.feature_name()].copy()
             
-            # 🛡️ 修正箇所1：数値はfloatに、カテゴリはColabと全く同じCategorical型にする
-            for c in X1.columns:
-                if c not in CATEGORIES_DEF_S1: X1[c] = X1[c].astype(float)
-                
+            # カテゴリをLightGBM内部の整数インデックス（.codes）に変換
             for c, cats in CATEGORIES_DEF_S1.items():
                 if c in X1.columns:
-                    X1[c] = pd.Categorical(X1[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
-            # ------------------------------------------------------------------
+                    X1[c] = pd.Categorical(X1[c].fillna(cats[0]).astype(int), categories=cats, ordered=False).codes
             
-            ds1['Stage1_Rough_Prob'] = m1.predict(X1)
+            # 🔥 ここが究極の解決策：純粋なNumPy配列（float型）に変換してPandasの壁を突破する
+            X1_array = X1.astype(float).values
+            ds1['Stage1_Rough_Prob'] = m1.predict(X1_array)
             
             ds2 = df_s2[df_s2['Project_ID_Calc'] == pid].merge(ds1[['Race_ID', 'Stage1_Rough_Prob']], on='Race_ID', how='inner')
             with open(f"Models_Stage2_V3/LGBM_Stage2_1st_V3_{pid}.pkl", 'rb') as f: m2_1 = pickle.load(f)
@@ -406,16 +404,14 @@ def run_ai_and_notify_v3(df_s1, df_s2):
             
             X2 = ds2.drop(columns=['Race_ID', 'Project_ID_Calc'])[m2_1.feature_name()].copy()
             
-            # 🛡️ 修正箇所2：Stage 2も同様にCategorical型を維持する
-            for c in X2.columns:
-                if c not in CATEGORIES_DEF: X2[c] = X2[c].astype(float)
-
+            # Stage 2も同様に内部整数（.codes）に変換
             for c, cats in CATEGORIES_DEF.items():
                 if c in X2.columns:
-                    X2[c] = pd.Categorical(X2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
-            # ------------------------------------------------------------------
-                    
-            ds2['P1'], ds2['P2'], ds2['P3'] = m2_1.predict(X2), m2_2.predict(X2), m2_3.predict(X2)
+                    X2[c] = pd.Categorical(X2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False).codes
+            
+            # 🔥 Stage 2も純粋なNumPy配列化
+            X2_array = X2.astype(float).values
+            ds2['P1'], ds2['P2'], ds2['P3'] = m2_1.predict(X2_array), m2_2.predict(X2_array), m2_3.predict(X2_array)
             
             for rid, grp in ds2.groupby('Race_ID', sort=False):
                 if len(grp) != 6: continue
