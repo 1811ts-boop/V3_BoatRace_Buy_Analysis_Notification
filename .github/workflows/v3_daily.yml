@@ -1,36 +1,52 @@
-name: V3 Daily BoatRace AI
+name: V3 & V5 Daily BoatRace AI
 
 on:
   schedule:
     # 毎日日本時間 朝6:30 に実行（UTCで前日の21:30）
     - cron: '30 21 * * *'
-  workflow_dispatch: # 手動実行用のボタン（テスト実行時に使います）
+  workflow_dispatch: # 手動実行用のボタン
 
 jobs:
-  run-v3-ai:
+  run-ai-models:
     runs-on: ubuntu-latest
     timeout-minutes: 30 # 万が一の通信無限待機を防ぐ安全装置
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4 # 最新の安定バージョンに更新
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5 # 最新バージョンに更新
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: 'pip' # 毎回のライブラリDLを省略し高速化・安定化
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # -----------------------------------------------
+      # 🚀 1つ目：従来のV3システムを実行
+      # -----------------------------------------------
       - name: Run V3 Daily Script
         env:
-          TZ: 'Asia/Tokyo' # OSレベルの時計を日本時間に強制固定
+          TZ: 'Asia/Tokyo'
           GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
         run: |
           python main.py
+
+      # -----------------------------------------------
+      # 🚀 2つ目：新しいV5システム（EVスナイパー）を実行
+      # -----------------------------------------------
+      - name: Run V5 Daily Script
+        if: always() # 🛡️ 超重要：V3がエラーで停止しても、V5は絶対に実行させる安全装置
+        env:
+          TZ: 'Asia/Tokyo'
+          GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+        run: |
+          python v5_main.py
