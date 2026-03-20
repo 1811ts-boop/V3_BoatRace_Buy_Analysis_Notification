@@ -38,11 +38,9 @@ LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 
 TIDE_CSV_NAME = "Tide_Master_2020_2026.csv"
-# ★変更：P2_Ladiesを追加
 PROJECT_IDS = ['P0_SG', 'P1_G1_Elite', 'P2_Ladies', 'P3_General_Std', 'P4_Planning']
 MAX_WORKERS = 3  
 
-# ★変更：V6(V5互換)仕様のカテゴリ定義
 CATEGORIES_DEF_S1 = {
     'PlaceID': list(range(1, 25)), 'RaceNum': list(range(1, 13)), 
     'Course_Type': [1, 2, 3, 4, 5], 'Weather_Code': [0, 1, 2, 3, 4, 5, 6], 'Tide_Trend': [-1, 0, 1]
@@ -54,10 +52,6 @@ CATEGORIES_DEF_S3['Bet_Ticket'] = [f"{p[0]}-{p[1]}-{p[2]}" for p in itertools.pe
 
 # 🏆 真・聖杯ターゲット（テスト期間ROI 100%超え・幻排除の完全版）
 TARGET_STRATEGIES = [
-    # -------------------------------------------------------------
-    # 【P2_Ladies】 レディース戦・大波乱狙い
-    # 特徴: 24年ROI 183.6% -> 25年ROI 160.6% (年間約100点)
-    # -------------------------------------------------------------
     {
         "pid": "P2_Ladies", 
         "s1_min": 0.34, 
@@ -65,15 +59,10 @@ TARGET_STRATEGIES = [
         "form": "1st_is_top2", 
         "desc": "P2 レディース (波乱34%超/オッズ110倍+/1着上位2艇)"
     },
-    
-    # -------------------------------------------------------------
-    # 【P3_General_Std】 一般戦・大穴ハンター（主軸）
-    # 特徴: 24年ROI 115.2% -> 25年ROI 148.7% (年間約370点。最も安定して打席数が多い)
-    # -------------------------------------------------------------
     {
         "pid": "P3_General_Std", 
-        "s1_min": 0.0, 
-        "odds_min": 10.0, 
+        "s1_min": 0.29, 
+        "odds_min": 110.0, 
         "form": "top_3_box", 
         "desc": "P3 一般戦A (波乱29%超/オッズ110倍+/上位3艇BOX)"
     },
@@ -84,11 +73,6 @@ TARGET_STRATEGIES = [
         "form": "top_3_box", 
         "desc": "P3 一般戦B (波乱34%超/オッズ110倍+/上位3艇BOX)"
     },
-
-    # -------------------------------------------------------------
-    # 【P4_Planning】 企画レース・特大万舟強襲
-    # 特徴: 24年ROI 170.3% -> 25年ROI 237.3% (年間約120点。破壊力トップ)
-    # -------------------------------------------------------------
     {
         "pid": "P4_Planning", 
         "s1_min": 0.34, 
@@ -142,7 +126,6 @@ def prepare_ai_models(service):
     download_latest_file_by_name(service, TIDE_CSV_NAME)
     
     for pid in PROJECT_IDS:
-        # ★変更：V6の3つのモデルと推論用Featureリストをダウンロード
         download_latest_file_by_name(service, f"LGBM_Stage1_V6_Ensemble_{pid}.pkl", "Models_Stage1_V6")
         download_latest_file_by_name(service, f"LGBM_Stage1_V6_Features_{pid}.pkl", "Models_Stage1_V6")
         download_latest_file_by_name(service, f"LGBM_Stage2_Ranker_V6_{pid}.pkl", "Models_Stage2_Ranker_V6")
@@ -189,7 +172,7 @@ def fetch_weather(place_id, target_time_str):
     except: return 0.0, 0.0, 1
 
 # =============================================================================
-# 3. スクレイピング処理 (流用・微修正)
+# 3. スクレイピング処理
 # =============================================================================
 def clean_str(s): return s.replace('\u3000', '').strip() if s else ""
 def clean_rank_value(val):
@@ -243,7 +226,6 @@ def parse_today_race(task_tuple):
     r_name = clean_str(soup.find('h2').text) if soup.find('h2') else ""
     
     flags = {'Is_SG': 1 if 'is-SG' in title_class else 0, 'Is_G1': 1 if 'is-G1' in title_class else 0, 'Is_Rookie': 1 if any(w in r_name for w in ['ルーキー', 'ヤング', '若手']) else 0}
-    # ★変更：P2_Ladiesの判定を追加
     flags['Is_Lady'] = 1 if 'is-lady' in title_class or 'ヴィーナス' in r_name or 'オールレディース' in r_name else 0
     flags['Is_General'] = 1 if sum([flags['Is_SG'], flags['Is_G1'], 1 if 'is-G2' in title_class else 0, 1 if 'is-G3' in title_class else 0]) == 0 else 0
     
@@ -263,7 +245,7 @@ def parse_today_race(task_tuple):
             w_nat, w_loc = list(tds[4].stripped_strings)[0], list(tds[5].stripped_strings)[0]
             r_data[f"R{i}_WinRate_National"], r_data[f"R{i}_WinRate_Local"] = w_nat, w_loc if w_loc != "0.00" else w_nat
             r_data[f"R{i}_Motor_2Ren"] = list(tds[6].stripped_strings)[1]
-            r_data[f"R{i}_Boat_2Ren"] = list(tds[7].stripped_strings)[1] # Phase1互換用に追加
+            r_data[f"R{i}_Boat_2Ren"] = list(tds[7].stripped_strings)[1] 
         except: pass
 
     row = {'Date': date_str, 'PlaceID': jcd, 'RaceNum': r, 'Scheduled_Time': sched, 'Project_ID': pid}
@@ -282,7 +264,7 @@ def scrape_today(today_obj):
     return pd.DataFrame(res)
 
 # =============================================================================
-# 4. 特徴量生成 (V6 Phase 1完全互換)
+# 4. 特徴量生成 
 # =============================================================================
 def safe_float(val, default=0.0):
     if pd.isna(val) or val == "" or val is None: return default
@@ -295,21 +277,15 @@ def safe_float(val, default=0.0):
         except ValueError: return default
 
 def transform_for_inference_v6(df_raw, df_tide):
-    """
-    V3のfs1/fs2分割方式を廃止し、V6のPhase1マスターデータと全く同じ
-    「df_wide (横持ち)」を生成する関数
-    """
     features_list = []
     error_count = 0
     
-    # モメンタム用の重み（直近14走）
     WEIGHTS_14 = np.array([max(0.2, (15 - i) * 0.1) for i in range(1, 15)][::-1])
     
     for _, row in df_raw.iterrows():
         pid, rnum, dt = int(safe_float(row.get('PlaceID'))), int(safe_float(row.get('RaceNum'))), int(row.get('Date', 0))
         race_id = f"{dt}_{pid}_{rnum}"
         
-        # 🛡️ バリデーション
         win_nat_sum = sum(safe_float(row.get(f"R{b}_WinRate_National")) for b in range(1, 7))
         if win_nat_sum < 15.0: 
             error_count += 1
@@ -338,7 +314,6 @@ def transform_for_inference_v6(df_raw, df_tide):
             f_count = safe_float(row.get(f"R{b}_F_Count"), 0) 
             weight = safe_float(row.get(f"R{b}_Weight"), 51.0)
             
-            # 過去14走からモメンタムと直近STを算出
             st_list, rank_pt_list = [], []
             for i in range(1, 15):
                 prk = safe_float(row.get(f"Boat{b}_Past_{i}_Rank"))
@@ -407,10 +382,11 @@ def transform_for_inference_v6(df_raw, df_tide):
     return pd.DataFrame(features_list)
 
 # =============================================================================
-# 5. AI推論 ＆ LINE通知 (V6 3段階推論完全互換)
+# 5. AI推論 ＆ LINE通知 
 # =============================================================================
 def run_ai_and_notify_v6(df_wide):
     buys = []
+    debug_logs = {}  # 📊 デバッグログ用辞書
     
     for pid in PROJECT_IDS:
         df_pid = df_wide[df_wide['Project_ID_Calc'] == pid].copy()
@@ -433,6 +409,15 @@ def run_ai_and_notify_v6(df_wide):
                 preds += model.predict(df_pid[s1_features]) / len(s1_models)
             
             for i in range(4): df_pid[f'Prob_Class{i}'] = preds[:, i]
+            
+            # 📊 ログ収集用: このプロジェクトで処理された全レース情報を保存
+            pid_targets = [t for t in TARGET_STRATEGIES if t['pid'] == pid]
+            for _, r in df_pid.iterrows():
+                plid = int(r['PlaceID'])
+                rnum = int(r['RaceNum'])
+                prob = float(r['Prob_Class3'])
+                if plid not in debug_logs: debug_logs[plid] = []
+                debug_logs[plid].append({'rnum': rnum, 'pid': pid, 'prob': prob, 'pid_targets': pid_targets})
             
             # -----------------------------------
             # Stage 2: Ranker推論 (Wide -> Long)
@@ -519,6 +504,32 @@ def run_ai_and_notify_v6(df_wide):
                         
         except Exception as e: 
             logger.error(f"AI Error ({pid}): {e}")
+
+    # -----------------------------------
+    # 📊 デバッグログ出力
+    # -----------------------------------
+    logger.info("📊 === AI推論結果の詳細レポート ===")
+    for plid in sorted(debug_logs.keys()):
+        place_name = JCD_MAP.get(f"{plid:02d}", "不明")
+        races = sorted(debug_logs[plid], key=lambda x: x['rnum'])
+        pid_groups = {}
+        for r in races:
+            pid_groups.setdefault(r['pid'], []).append(r)
+            
+        for p_id, p_races in pid_groups.items():
+            targets = p_races[0]['pid_targets']
+            target_str = "ターゲット条件: " + " / ".join([t['desc'] for t in targets]) if targets else "ターゲット条件: 設定なし（見送り対象）"
+            logger.info(f"🚤 {place_name} ({p_id}) - 全{len(p_races)}レース分析完了 | {target_str}")
+            
+            for r in p_races:
+                rnum = r['rnum']
+                prob = r['prob']
+                # 抽出された買い目の中に、このレースが含まれているかチェック
+                race_buys = [b for b in buys if b['p'] == plid and b['r'] == rnum and b.get('desc') in [t['desc'] for t in targets]]
+                match_mark = "✅ 条件クリア（抽出済）" if race_buys else "❌ スルー"
+                
+                logger.info(f"    {rnum:>2}R: 波乱予測({prob*100:.1f}%) -> {match_mark}")
+    logger.info("======================================")
 
     # -----------------------------------
     # LINE通知フォーマット
