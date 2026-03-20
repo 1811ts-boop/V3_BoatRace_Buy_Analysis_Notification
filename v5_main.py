@@ -39,22 +39,19 @@ LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 
 TIDE_CSV_NAME = "Tide_Master_2020_2026.csv"
-# 🚀 P3, P4を完全排除。証明された市場のみに絞る
 PROJECT_IDS = ['P0_SG', 'P1_G1_Elite', 'P2_Ladies']
 
 MAX_WORKERS = 3  
 
-# 🚀 V5 共通カテゴリ定義
 CATEGORIES_DEF_S1 = {
     'PlaceID': list(range(1, 25)), 'RaceNum': list(range(1, 13)), 
     'Course_Type': [1, 2, 3, 4, 5], 'Weather_Code': [0, 1, 2, 3, 4, 5, 6], 'Tide_Trend': [-1, 0, 1]
 }
 CATEGORIES_DEF_S2 = CATEGORIES_DEF_S1.copy(); CATEGORIES_DEF_S2['Boat_Number'] = [1, 2, 3, 4, 5, 6]
 CATEGORIES_DEF_S3 = CATEGORIES_DEF_S1.copy()
-# 今回は1頭の20通りのみ
 CATEGORIES_DEF_S3['Bet_Ticket'] = [f"1-{p[0]}-{p[1]}" for p in itertools.permutations(range(2, 7), 2)]
 
-# 🏆 【V5 中穴EVスナイパー】 OOSでROI 100%超えが証明された聖杯条件
+# 🏆 【V5 中穴EVスナイパー】 聖杯条件
 HOLY_GRAIL = {
     'P0_SG':       {'S1_th': 0.50, 'Min_Odd': 20.0, 'Max_Odd': 30.0, 'EV_th': 7.0},
     'P1_G1_Elite': {'S1_th': 0.60, 'Min_Odd': 10.0, 'Max_Odd': 50.0, 'EV_th': 20.0},
@@ -189,7 +186,6 @@ def parse_today_race(task_tuple):
     
     flags = {'Is_SG': 1 if 'is-SG' in title_class else 0, 'Is_G1': 1 if 'is-G1' in title_class else 0, 'Is_Lady': 1 if 'is-G3' in title_class and 'オールレディース' in r_name else 0}
     
-    # 🚀 V5: 対象外プロジェクトは容赦なくスキップ（処理の超高速化）
     pid = "P3_General_Std"
     if flags['Is_SG']: pid = "P0_SG"
     elif flags['Is_G1']: pid = "P1_G1_Elite"
@@ -226,7 +222,7 @@ def scrape_today(today_obj):
     return pd.DataFrame(res)
 
 # =============================================================================
-# 4. 特徴量生成（V5仕様に完全準拠）
+# 4. 特徴量生成
 # =============================================================================
 def safe_float(val, default=0.0):
     if pd.isna(val) or val == "" or val is None: return default
@@ -266,14 +262,12 @@ def transform_for_inference_v5(df_raw, df_tide):
             win_nat = safe_float(row.get(f"R{b}_WinRate_National"))
             win_local = safe_float(row.get(f"R{b}_WinRate_Local"), win_nat) 
             motor_2ren = safe_float(row.get(f"R{b}_Motor_2Ren"))
-            boat_2ren = 30.0 # 本番APIにボート勝率はないため学習時のデフォルト値
+            boat_2ren = 30.0 
             avg_st = safe_float(row.get(f"R{b}_Avg_ST"), 0.17)
             f_count = safe_float(row.get(f"R{b}_F_Count"), 0) 
             weight = safe_float(row.get(f"R{b}_Weight"), 51.0)
             
-            # V5 過去14走の集計
-            sts = []
-            ranks = []
+            sts, ranks = [], []
             for i in range(1, 15):
                 pst = safe_float(row.get(f"Boat{b}_Past_{i}_ST"))
                 prk = safe_float(row.get(f"Boat{b}_Past_{i}_Rank"))
@@ -334,16 +328,26 @@ def transform_for_inference_v5(df_raw, df_tide):
     return pd.DataFrame(features_list)
 
 # =============================================================================
-# 5. AI推論 ＆ LINE通知（V5 EV Sniper）
+# 5. AI推論 ＆ LINE通知（詳細ログ追加版）
 # =============================================================================
 def run_v5_inference_and_notify(df_wide):
     buys = []
+    debug_logs = {} # 📊 ログ出力用辞書
     
     for pid in PROJECT_IDS:
         df_w = df_wide[df_wide['Project_ID_Calc'] == pid].copy()
         if df_w.empty: continue
             
         logger.info(f"🧠 {pid} の推論を開始します... (対象: {len(df_w)}レース)")
+        
+        # 📊 ログの初期化（全対象レースを格納）
+        debug_logs[pid] = {}
+        for _, r in df_w.iterrows():
+            debug_logs[pid][r['Race_ID']] = {
+                'plid': int(r['PlaceID']), 'rnum': int(r['RaceNum']), 
+                'prob0': 0.0, 'max_ev': 0.0, 'status': '❌ 鉄板確率不足 (Stage 1で足切り)'
+            }
+
         try:
             # --- Stage 1: 鉄板確率算出 ---
             with open(f"Models_Stage1_V5/LGBM_Stage1_V5_Ensemble_{pid}.pkl", 'rb') as f: s1_models = pickle.load(f)
@@ -354,12 +358,20 @@ def run_v5_inference_and_notify(df_wide):
                     
             preds = np.zeros((len(df_w), 4))
             for m in s1_models: preds += m.predict(df_w[s1_features]) / len(s1_models)
-            df_w['Prob_Class0'] = preds[:, 0] # 1着確率のみ保持
+            df_w['Prob_Class0'] = preds[:, 0] 
             
-            # 足切り（この段階で確率が満たないレースは計算を打ち切って超高速化）
+            # 📊 ログに鉄板確率を記録
+            for _, r in df_w.iterrows():
+                debug_logs[pid][r['Race_ID']]['prob0'] = r['Prob_Class0']
+
+            # Stage 1 足切り
             th_s1 = HOLY_GRAIL[pid]['S1_th']
             df_w = df_w[df_w['Prob_Class0'] >= th_s1].copy()
-            if df_w.empty: continue
+            if df_w.empty: continue # 全滅した場合は次のプロジェクトへ
+            
+            # 足切りを通過したレースのステータスを更新
+            for _, r in df_w.iterrows():
+                debug_logs[pid][r['Race_ID']]['status'] = '❌ オッズ/EV条件未達 (Stage 3で足切り)'
 
             # --- Stage 2: Ranker ---
             base_cols = ['Race_ID', 'DateInt', 'PlaceID', 'RaceNum', 'Course_Type', 'Month_Cos', 'Weather_Code', 'Wind_Speed', 'Tailwind_Comp', 'Crosswind_Comp', 'Tide_Level_cm', 'Tide_Trend', 'Tournament_Day', 'B1_Advantage', 'Wall_ST', 'Dash_Threat', 'B1_vs_B2_Power_Diff', 'B1_vs_B3_Power_Diff', 'B1_vs_B2_ST_Diff', 'Prob_Class0']
@@ -386,7 +398,7 @@ def run_v5_inference_and_notify(df_wide):
             # --- Stage 3: Odds & EV Calculation ---
             bets = []
             for race_id in df_w['Race_ID'].unique():
-                for p in itertools.permutations(range(2, 7), 2): # 1アタマの20通りのみ
+                for p in itertools.permutations(range(2, 7), 2): 
                     bets.append({'Race_ID': race_id, 'Bet_Ticket': f"1-{p[0]}-{p[1]}"})
             df_bets = pd.DataFrame(bets)
             df_s3 = pd.merge(df_bets, df_w, on='Race_ID', how='inner')
@@ -398,7 +410,6 @@ def run_v5_inference_and_notify(df_wide):
                     
             df_bets['Predicted_Odds'] = np.expm1(s3_model.predict(df_s3[s3_features]))
             
-            # Ticket_EV計算
             score_dict = df_long.set_index(['Race_ID', 'Boat_Number'])['Ranker_Score'].to_dict()
             prob0_dict = df_long[df_long['Boat_Number'] == 1].set_index('Race_ID')['Prob_Class0'].to_dict()
             
@@ -410,39 +421,74 @@ def run_v5_inference_and_notify(df_wide):
                 
             df_bets['Ticket_EV'] = df_bets.apply(calc_ev, axis=1)
             
-            # 🎯 聖杯フィルター適用（単点スナイプ抽出）
+            # 🎯 聖杯フィルター適用 ＆ ログ更新
             min_o, max_o, ev_th = HOLY_GRAIL[pid]['Min_Odd'], HOLY_GRAIL[pid]['Max_Odd'], HOLY_GRAIL[pid]['EV_th']
-            df_hit = df_bets[(df_bets['Predicted_Odds'] >= min_o) & (df_bets['Predicted_Odds'] <= max_o) & (df_bets['Ticket_EV'] >= ev_th)]
             
-            for _, r in df_hit.iterrows():
-                plid = int(r['Race_ID'].split('_')[1])
-                rnum = int(r['Race_ID'].split('_')[2])
-                # 重複防止とデータ整理
-                buys.append({
-                    'pid': pid, 'plid': plid, 'rnum': rnum, 
-                    'time': df_w[df_w['Race_ID']==r['Race_ID']]['Scheduled_Time'].iloc[0],
-                    'ticket': r['Bet_Ticket'], 'odds': r['Predicted_Odds'], 'ev': r['Ticket_EV']
-                })
+            for rid, grp in df_bets.groupby('Race_ID'):
+                best_ev = grp['Ticket_EV'].max()
+                debug_logs[pid][rid]['max_ev'] = best_ev # 📊 ログに最大EVを記録
+                
+                # スナイプ条件に合致する買い目を抽出
+                hit_tickets = grp[(grp['Predicted_Odds'] >= min_o) & (grp['Predicted_Odds'] <= max_o) & (grp['Ticket_EV'] >= ev_th)]
+                
+                if not hit_tickets.empty:
+                    debug_logs[pid][rid]['status'] = '✅ スナイプ条件クリア' # 📊 ログを更新
+                    for _, r in hit_tickets.iterrows():
+                        plid = int(rid.split('_')[1])
+                        rnum = int(rid.split('_')[2])
+                        buys.append({
+                            'pid': pid, 'plid': plid, 'rnum': rnum, 
+                            'time': df_w[df_w['Race_ID']==r['Race_ID']]['Scheduled_Time'].iloc[0],
+                            'ticket': r['Bet_Ticket'], 'odds': r['Predicted_Odds'], 'ev': r['Ticket_EV']
+                        })
         except Exception as e: 
             logger.error(f"AI Error ({pid}): {e}")
+
+    # =========================================================
+    # 📊 デバッグログ出力（コンソール用）
+    # =========================================================
+    logger.info("📊 === AI推論結果の詳細レポート (V5 EV Sniper) ===")
+    if not debug_logs:
+        logger.info("🚤 本日は稼働対象となるSG・G1・Ladiesのレースがありませんでした。")
+    else:
+        for pid in PROJECT_IDS:
+            if pid not in debug_logs or not debug_logs[pid]: continue
+            
+            # 会場ごとにグループ化して綺麗に表示
+            place_groups = {}
+            for rid, info in debug_logs[pid].items():
+                place_groups.setdefault(info['plid'], []).append(info)
+                
+            cond = HOLY_GRAIL[pid]
+            target_str = f"ターゲット条件: 鉄板{int(cond['S1_th']*100)}%+ / オッズ{cond['Min_Odd']}-{cond['Max_Odd']}倍 / EV{cond['EV_th']}+"
+            
+            for plid in sorted(place_groups.keys()):
+                place_name = JCD_MAP.get(f"{plid:02d}", "不明")
+                races = sorted(place_groups[plid], key=lambda x: x['rnum'])
+                
+                logger.info(f"🚤 {place_name} ({pid}) - 全{len(races)}レース分析完了 | {target_str}")
+                for r in races:
+                    # 鉄板確率が閾値未満の場合は、EVは計算していないので空白にする
+                    p_str = f"鉄板: {r['prob0']*100:>4.1f}%"
+                    ev_str = f" / 最大EV: {r['max_ev']:>4.1f}" if r['prob0'] >= cond['S1_th'] else ""
+                    logger.info(f"    {r['rnum']:>2}R: {p_str}{ev_str} -> {r['status']}")
+    logger.info("==================================================")
 
     # 📊 LINE通知
     if not buys:
         msg = f"🤖 【V5 中穴EVスナイパー】\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n本日は「全天候型・中穴バリュー投資」の厳しい基準をクリアするレースがありませんでした🍵\n（資金防衛のための見送りです）"
         send_line_broadcast(msg)
     else:
-        # レースごとにグループ化
         race_groups = {}
         for b in buys:
             k = (b['plid'], b['rnum'], b['pid'], b['time'])
             race_groups.setdefault(k, []).append(b)
             
         msg = f"🤖 【V5 中穴EVスナイパー】\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n🎯 本日の単点スナイプ: {len(race_groups)}レース\n"
-        for (plid, rnum, pid, t), tkts in sorted(race_groups.items(), key=lambda x: x[0][3]): # 時間順
+        for (plid, rnum, pid, t), tkts in sorted(race_groups.items(), key=lambda x: x[0][3]):
             place_name = JCD_MAP.get(f"{plid:02d}", "不明")
             grade = "SG" if pid == "P0_SG" else "G1" if pid == "P1_G1_Elite" else "Ladies(G3)"
             msg += f"\n🚤 {place_name} {rnum}R ({t} 締切)\n👑 {grade}特化エッジ\n"
-            # EV順に並び替え
             for tk in sorted(tkts, key=lambda x: x['ev'], reverse=True):
                 msg += f" 🔥 {tk['ticket']} (予想オッズ: {tk['odds']:.1f}倍 | EV: {tk['ev']:.1f})\n"
         send_line_broadcast(msg)
