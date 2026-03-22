@@ -410,7 +410,7 @@ def run_ai_and_notify_v7(df_s1, df_s2):
                     score = (p1[b1] * p2[b2]) + (p1[b2] * p2[b1])
                     sc[f"{b1}={b2}"] = score
                     
-                buys.append({'p': plid, 'r': rnum, 'c': cat, 'b': [x[0] for x in sorted(sc.items(), key=lambda x: x[1], reverse=True)[:2]]})
+                buys.append({'p': plid, 'r': rnum, 'c': cat, 'b': [x[0] for x in sorted(sc.items(), key=lambda x: x[1], reverse=True)[:1]]})
         except Exception as e: 
             logger.error(f"AI Error ({pid}): {e}")
 
@@ -435,10 +435,10 @@ def run_ai_and_notify_v7(df_s1, df_s2):
         logger.info("本日は条件合致レースがありませんでした。LINEに通知します。")
         send_line_broadcast(msg)
     else:
-        msg = f"🤖 【V7 2連複・真・聖杯AI】\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n✅ 合致：{len(buys)}レース（上位2点買い）\n"
+        msg = f"🤖 【V7 2連複・真・聖杯AI】\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n✅ 合致：{len(buys)}レース（上位1点買い）\n"
         for b in sorted(buys, key=lambda x: (x['p'], x['r'])):
             place_name = JCD_MAP.get(f"{b['p']:02d}", "不明")
-            msg += f"\n🚤 {place_name} {b['r']}R\n【{b['c']}】\n◎ {b['b'][0]}\n○ {b['b'][1]}\n"
+            msg += f"\n🚤 {place_name} {b['r']}R\n【{b['c']}】\n◎ {b['b'][0]}\n"
         send_line_broadcast(msg)
         logger.info(f"買い目送信完了: {len(buys)}レース")
 
