@@ -1,4 +1,4 @@
-name: V3 & V5 & V6 Daily BoatRace AI
+name: V3 & V5 & V6 & V7 Daily BoatRace AI
 
 on:
   schedule:
@@ -9,7 +9,7 @@ on:
 jobs:
   run-ai-models:
     runs-on: ubuntu-latest
-    timeout-minutes: 60 # 🛡️ 3モデル連続稼働のため、安全装置を60分に拡張
+    timeout-minutes: 80 # 🛡️ 4モデル連続稼働のため、安全装置を80分に拡張
 
     steps:
       - name: Checkout repository
@@ -63,3 +63,16 @@ jobs:
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
         run: |
           python V6_main.py  # ← 大文字・小文字など、実際のファイル名に正確に合わせてください
+
+      # -----------------------------------------------
+      # 🚀 4つ目：V7システム（2連複専用）を実行
+      # -----------------------------------------------
+      - name: Run V7 Daily Script
+        if: always() # 🛡️ V3やV5やV6がコケても必ず実行
+        env:
+          TZ: 'Asia/Tokyo'
+          GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+        run: |
+          python V7_DailyRun.py
