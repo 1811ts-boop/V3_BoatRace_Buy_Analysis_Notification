@@ -47,21 +47,8 @@ CATEGORIES_DEF = {
     'Boat_Number': [1, 2, 3, 4, 5, 6]
 }
 
-# 🏆 【2連複専用・全54条件】新・聖杯カレンダー（ROI 105%以上 ＆ 的中率50%以上）
-PORTFOLIO_V7 = {
-    1: [("P4_Planning", 3, "やや堅め(20-40%)"), ("P4_Planning", 24, "普通(40-60%)"), ("P1_G1_Elite", 11, "やや堅め(20-40%)"), ("P3_General_Std", 1, "大荒れ(80-100%)"), ("P4_Planning", 8, "普通(40-60%)"), ("P4_Planning", 3, "やや荒れ(60-80%)"), ("P1_G1_Elite", 2, "やや堅め(20-40%)"), ("P4_Planning", 19, "やや堅め(20-40%)"), ("P4_Planning", 11, "やや堅め(20-40%)"), ("P3_General_Std", 10, "超堅め(0-20%)"), ("P3_General_Std", 19, "やや荒れ(60-80%)"), ("P1_G1_Elite", 20, "普通(40-60%)"), ("P4_Planning", 20, "やや堅め(20-40%)"), ("P1_G1_Elite", 3, "やや堅め(20-40%)"), ("P4_Planning", 14, "やや堅め(20-40%)"), ("P3_General_Std", 8, "超堅め(0-20%)"), ("P3_General_Std", 23, "やや荒れ(60-80%)"), ("P3_General_Std", 10, "やや荒れ(60-80%)"), ("P4_Planning", 10, "やや堅め(20-40%)"), ("P1_G1_Elite", 18, "やや堅め(20-40%)"), ("P1_G1_Elite", 19, "やや堅め(20-40%)"), ("P1_G1_Elite", 23, "やや荒れ(60-80%)"), ("P3_General_Std", 13, "やや荒れ(60-80%)"), ("P1_G1_Elite", 14, "普通(40-60%)"), ("P3_General_Std", 16, "超堅め(0-20%)"), ("P3_General_Std", 22, "やや荒れ(60-80%)"), ("P3_General_Std", 2, "超堅め(0-20%)"), ("P4_Planning", 7, "やや堅め(20-40%)"), ("P3_General_Std", 2, "大荒れ(80-100%)"), ("P4_Planning", 9, "やや堅め(20-40%)"), ("P3_General_Std", 6, "超堅め(0-20%)"), ("P4_Planning", 13, "普通(40-60%)"), ("P3_General_Std", 17, "普通(40-60%)"), ("P3_General_Std", 21, "普通(40-60%)"), ("P3_General_Std", 19, "普通(40-60%)"), ("P1_G1_Elite", 21, "普通(40-60%)"), ("P3_General_Std", 8, "やや荒れ(60-80%)"), ("P3_General_Std", 15, "やや荒れ(60-80%)"), ("P1_G1_Elite", 23, "普通(40-60%)"), ("P3_General_Std", 9, "やや荒れ(60-80%)"), ("P1_G1_Elite", 13, "普通(40-60%)"), ("P3_General_Std", 17, "超堅め(0-20%)"), ("P4_Planning", 6, "やや堅め(20-40%)"), ("P3_General_Std", 9, "超堅め(0-20%)"), ("P3_General_Std", 14, "超堅め(0-20%)"), ("P3_General_Std", 21, "やや堅め(20-40%)"), ("P3_General_Std", 19, "やや堅め(20-40%)"), ("P4_Planning", 16, "普通(40-60%)"), ("P3_General_Std", 18, "やや荒れ(60-80%)"), ("P4_Planning", 20, "普通(40-60%)"), ("P4_Planning", 14, "普通(40-60%)"), ("P4_Planning", 5, "やや堅め(20-40%)"), ("P4_Planning", 12, "やや堅め(20-40%)"), ("P4_Planning", 6, "普通(40-60%)"), ("P3_General_Std", 11, "普通(40-60%)"), ("P3_General_Std", 4, "普通(40-60%)"), ("P3_General_Std", 2, "やや荒れ(60-80%)"), ("P3_General_Std", 7, "やや堅め(20-40%)"), ("P3_General_Std", 7, "超堅め(0-20%)"), ("P3_General_Std", 11, "超堅め(0-20%)"), ("P1_G1_Elite", 13, "やや堅め(20-40%)"), ("P4_Planning", 16, "やや堅め(20-40%)"), ("P3_General_Std", 24, "やや堅め(20-40%)"), ("P1_G1_Elite", 6, "普通(40-60%)"), ("P3_General_Std", 6, "普通(40-60%)"), ("P4_Planning", 17, "やや堅め(20-40%)"), ("P1_G1_Elite", 6, "やや堅め(20-40%)"), ("P3_General_Std", 5, "普通(40-60%)"), ("P3_General_Std", 8, "やや堅め(20-40%)"), ("P3_General_Std", 5, "やや荒れ(60-80%)"), ("P3_General_Std", 13, "やや堅め(20-40%)"), ("P3_General_Std", 13, "普通(40-60%)"), ("P3_General_Std", 4, "やや荒れ(60-80%)"), ("P3_General_Std", 15, "やや堅め(20-40%)"), ("P3_General_Std", 23, "超堅め(0-20%)"), ("P3_General_Std", 3, "普通(40-60%)"), ("P1_G1_Elite", 21, "やや堅め(20-40%)"), ("P3_General_Std", 1, "超堅め(0-20%)"), ("P3_General_Std", 6, "やや堅め(20-40%)"), ("P3_General_Std", 17, "やや堅め(20-40%)"), ("P3_General_Std", 5, "超堅め(0-20%)"), ("P4_Planning", 17, "超堅め(0-20%)"), ("P3_General_Std", 9, "やや堅め(20-40%)"), ("P4_Planning", 9, "超堅め(0-20%)"), ("P4_Planning", 15, "やや堅め(20-40%)"), ("P3_General_Std", 2, "普通(40-60%)"), ("P3_General_Std", 2, "やや堅め(20-40%)"), ("P3_General_Std", 4, "やや堅め(20-40%)"), ("P3_General_Std", 22, "普通(40-60%)"), ("P3_General_Std", 1, "普通(40-60%)"), ("P3_General_Std", 20, "やや堅め(20-40%)"), ("P3_General_Std", 14, "やや堅め(20-40%)"), ("P3_General_Std", 16, "やや堅め(20-40%)"), ("P4_Planning", 18, "やや堅め(20-40%)"), ("P3_General_Std", 3, "超堅め(0-20%)"), ("P4_Planning", 17, "普通(40-60%)"), ("P3_General_Std", 9, "普通(40-60%)"), ("P4_Planning", 5, "普通(40-60%)"), ("P3_General_Std", 18, "超堅め(0-20%)"), ("P3_General_Std", 14, "やや荒れ(60-80%)"), ("P3_General_Std", 12, "やや堅め(20-40%)"), ("P3_General_Std", 14, "普通(40-60%)"), ("P1_G1_Elite", 8, "普通(40-60%)"), ("P1_G1_Elite", 20, "やや堅め(20-40%)"), ("P3_General_Std", 12, "普通(40-60%)"), ("P3_General_Std", 12, "超堅め(0-20%)"), ("P4_Planning", 24, "やや堅め(20-40%)"), ("P3_General_Std", 24, "普通(40-60%)"), ("P3_General_Std", 16, "普通(40-60%)"), ("P3_General_Std", 5, "やや堅め(20-40%)"), ("P4_Planning", 22, "普通(40-60%)"), ("P3_General_Std", 13, "超堅め(0-20%)"), ("P3_General_Std", 18, "やや堅め(20-40%)"), ("P3_General_Std", 22, "やや堅め(20-40%)"), ("P3_General_Std", 21, "超堅め(0-20%)"), ("P4_Planning", 23, "普通(40-60%)"), ("P3_General_Std", 3, "やや荒れ(60-80%)"), ("P1_G1_Elite", 24, "やや堅め(20-40%)"), ("P4_Planning", 22, "やや堅め(20-40%)"), ("P3_General_Std", 10, "普通(40-60%)"), ("P3_General_Std", 20, "超堅め(0-20%)"), ("P3_General_Std", 23, "やや堅め(20-40%)"), ("P4_Planning", 15, "普通(40-60%)"), ("P3_General_Std", 11, "やや堅め(20-40%)"), ("P3_General_Std", 19, "超堅め(0-20%)")],
-    2: [("P3_General_Std", 18, "やや荒れ(60-80%)"), ("P4_Planning", 12, "普通(40-60%)"), ("P1_G1_Elite", 15, "普通(40-60%)"), ("P3_General_Std", 1, "超堅め(0-20%)"), ("P4_Planning", 5, "やや堅め(20-40%)"), ("P4_Planning", 13, "普通(40-60%)"), ("P4_Planning", 17, "やや堅め(20-40%)"), ("P3_General_Std", 5, "超堅め(0-20%)")],
-    3: [("P3_General_Std", 2, "大荒れ(80-100%)"), ("P4_Planning", 16, "やや堅め(20-40%)"), ("P4_Planning", 9, "普通(40-60%)"), ("P4_Planning", 24, "普通(40-60%)"), ("P4_Planning", 15, "やや堅め(20-40%)"), ("P4_Planning", 6, "やや堅め(20-40%)"), ("P4_Planning", 15, "普通(40-60%)"), ("P4_Planning", 20, "普通(40-60%)"), ("P4_Planning", 24, "やや堅め(20-40%)"), ("P3_General_Std", 13, "普通(40-60%)")],
-    4: [("P4_Planning", 3, "普通(40-60%)"), ("P1_G1_Elite", 17, "やや堅め(20-40%)"), ("P4_Planning", 11, "やや堅め(20-40%)")],
-    5: [("P4_Planning", 4, "普通(40-60%)"), ("P4_Planning", 20, "普通(40-60%)"), ("P4_Planning", 19, "普通(40-60%)"), ("P3_General_Std", 11, "超堅め(0-20%)"), ("P4_Planning", 5, "やや堅め(20-40%)")],
-    6: [("P4_Planning", 5, "やや堅め(20-40%)"), ("P4_Planning", 1, "やや荒れ(60-80%)")],
-    7: [("P4_Planning", 8, "普通(40-60%)"), ("P4_Planning", 12, "普通(40-60%)"), ("P4_Planning", 4, "普通(40-60%)"), ("P3_General_Std", 15, "普通(40-60%)")],
-    8: [("P4_Planning", 19, "普通(40-60%)"), ("P4_Planning", 1, "普通(40-60%)"), ("P4_Planning", 5, "やや堅め(20-40%)")],
-    9: [("P3_General_Std", 11, "超堅め(0-20%)")],
-    10: [("P4_Planning", 20, "やや堅め(20-40%)"), ("P4_Planning", 7, "普通(40-60%)"), ("P4_Planning", 24, "やや堅め(20-40%)"), ("P4_Planning", 19, "普通(40-60%)")],
-    11: [("P4_Planning", 15, "普通(40-60%)"), ("P4_Planning", 1, "普通(40-60%)"), ("P4_Planning", 20, "やや堅め(20-40%)")],
-    12: [("P4_Planning", 4, "やや荒れ(60-80%)"), ("P4_Planning", 13, "やや堅め(20-40%)"), ("P4_Planning", 24, "普通(40-60%)"), ("P4_Planning", 8, "やや堅め(20-40%)")]
-}
+# 🏆 【2連複 1点買い専用】全天候型ポートフォリオ
+PORTFOLIO_CSV_NAME = "V7_Combined_Portfolio_Calendar_1Buy.csv"
 
 JCD_MAP = {f"{i:02d}": name for i, name in enumerate(["桐生", "戸田", "江戸川", "平和島", "多摩川", "浜名湖", "蒲郡", "常滑", "津", "三国", "びわこ", "住之江", "尼崎", "鳴門", "丸亀", "児島", "宮島", "徳山", "下関", "若松", "芦屋", "福岡", "唐津", "大村"], 1)}
 PLACE_COORDS = {1: {"lat": 36.39, "lon": 139.30}, 2: {"lat": 35.82, "lon": 139.66}, 3: {"lat": 35.69, "lon": 139.86}, 4: {"lat": 35.58, "lon": 139.73}, 5: {"lat": 35.65, "lon": 139.51}, 6: {"lat": 34.69, "lon": 137.56}, 7: {"lat": 34.82, "lon": 137.21}, 8: {"lat": 34.88, "lon": 136.82}, 9: {"lat": 34.68, "lon": 136.51}, 10: {"lat": 36.21, "lon": 136.16}, 11: {"lat": 35.01, "lon": 135.85}, 12: {"lat": 34.60, "lon": 135.47}, 13: {"lat": 34.71, "lon": 135.38}, 14: {"lat": 34.20, "lon": 134.60}, 15: {"lat": 34.30, "lon": 133.79}, 16: {"lat": 34.46, "lon": 133.81}, 17: {"lat": 34.29, "lon": 132.30}, 18: {"lat": 34.03, "lon": 131.81}, 19: {"lat": 33.99, "lon": 130.98}, 20: {"lat": 33.89, "lon": 130.75}, 21: {"lat": 33.88, "lon": 130.66}, 22: {"lat": 33.59, "lon": 130.39}, 23: {"lat": 33.43, "lon": 129.98}, 24: {"lat": 32.89, "lon": 129.96}}
@@ -95,6 +82,7 @@ def prepare_ai_models(service):
     os.makedirs("Models_Stage1_2Fuku", exist_ok=True)
     os.makedirs("Models_Stage2_2Fuku", exist_ok=True)
     download_latest_file_by_name(service, TIDE_CSV_NAME)
+    download_latest_file_by_name(service, PORTFOLIO_CSV_NAME)  # 💡 この1行を追加！
     
     for pid in PROJECT_IDS:
         download_latest_file_by_name(service, f"LGBM_Stage1_2Fuku_{pid}.pkl", "Models_Stage1_2Fuku")
@@ -337,12 +325,25 @@ def transform_for_inference_v7(df_raw, df_tide):
 def get_rough_cat(p): return "超堅め(0-20%)" if p < 0.2 else "やや堅め(20-40%)" if p < 0.4 else "普通(40-60%)" if p < 0.6 else "やや荒れ(60-80%)" if p < 0.8 else "大荒れ(80-100%)"
 
 def run_ai_and_notify_v7(df_s1, df_s2):
-    t_cond = PORTFOLIO_V7.get(TODAY_OBJ.month, [])
-    if not t_cond:
-        msg = f"🤖 【V7 2連複・真・聖杯AI】\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n今月（{TODAY_OBJ.month}月）は2連複の勝負条件が存在しないため稼働全休です🍵"
+    current_month = TODAY_OBJ.month
+    
+    # 🎯 V7 カレンダーCSVの読み込み
+    if not os.path.exists(PORTFOLIO_CSV_NAME):
+        logger.error(f"❌ ポートフォリオ設定ファイル({PORTFOLIO_CSV_NAME})がありません。")
+        send_line_broadcast("❌ カレンダー設定ファイルが見つからないため稼働を停止します。")
+        return
+        
+    df_port = pd.read_csv(PORTFOLIO_CSV_NAME)
+    df_this_month = df_port[df_port['Month'] == current_month]
+    
+    if df_this_month.empty:
+        msg = f"🤖 【V7 2連複 1点買いAI】\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n今月（{current_month}月）は勝負条件が存在しないため稼働全休です🍵"
         logger.info("本日は稼働対象月ではありません。LINEに全休通知を送ります。")
         send_line_broadcast(msg)
         return
+
+    # 🛡️ 検索高速化のための辞書作成 (Project_ID, 場名(文字列), Rough_Category) -> 戦略
+    target_dict = {(row['Project_ID'], row['場名'], row['Rough_Category']): row['戦略'] for _, row in df_this_month.iterrows()}
 
     CATEGORIES_DEF_S1 = {'Course_Type': [1, 2, 3, 4, 5], 'Weather_Code': [1, 2, 3], 'Tide_Trend': [-1, 0, 1]}
     buys = []
@@ -378,21 +379,14 @@ def run_ai_and_notify_v7(df_s1, df_s2):
                 if len(grp) != 6: continue
                 plid = int(grp['PlaceID'].iloc[0])
                 rnum = int(rid.split('_')[2])
+                place_name = JCD_MAP.get(f"{plid:02d}", "不明")  # 場名を取得
                 cat = get_rough_cat(grp['Stage1_Rough_Prob'].iloc[0])
                 
-                # 🎯 判定プロセスの詳細化とログ保存
-                target_cats = [tc for tp, tpl, tc in t_cond if tp == pid and tpl == plid]
+                # 🎯 ポートフォリオ照合 (O(1) ルックアップ)
+                matched_strategy = target_dict.get((pid, place_name, cat))
                 
-                is_hit = False
-                reason = ""
-                
-                if not target_cats:
-                    reason = "当場・当条件の勝負指定なし"
-                elif cat not in target_cats:
-                    reason = f"予測『{cat}』が指定条件（{' / '.join(target_cats)}）と不一致"
-                else:
-                    is_hit = True
-                    reason = f"予測『{cat}』が指定条件を満たすためOK 🎯"
+                is_hit = bool(matched_strategy)
+                reason = f"✅ 合致: 戦略[{matched_strategy}]" if is_hit else "❌ 当場・当条件の勝負指定なし"
                 
                 if plid not in debug_logs: debug_logs[plid] = []
                 debug_logs[plid].append({'rnum': rnum, 'pid': pid, 'cat': cat, 'is_hit': is_hit, 'reason': reason})
@@ -410,6 +404,7 @@ def run_ai_and_notify_v7(df_s1, df_s2):
                     score = (p1[b1] * p2[b2]) + (p1[b2] * p2[b1])
                     sc[f"{b1}={b2}"] = score
                     
+                # 上位1点買い
                 buys.append({'p': plid, 'r': rnum, 'c': cat, 'b': [x[0] for x in sorted(sc.items(), key=lambda x: x[1], reverse=True)[:1]]})
         except Exception as e: 
             logger.error(f"AI Error ({pid}): {e}")
