@@ -36,6 +36,7 @@ LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 
 TIDE_CSV_NAME = "Tide_Master_2020_2026.csv"
+PORTFOLIO_CSV_NAME = "V7_Combined_Portfolio_Calendar_1Buy.csv"  # 💡 修正①: CSVファイル名を追加
 PROJECT_IDS = ['P0_SG', 'P1_G1_Elite', 'P3_General_Std', 'P4_Planning']
 MAX_WORKERS = 3  
 
@@ -46,9 +47,6 @@ CATEGORIES_DEF = {
     'Tide_Trend': [-1, 0, 1], 
     'Boat_Number': [1, 2, 3, 4, 5, 6]
 }
-
-# 🏆 【2連複 1点買い専用】全天候型ポートフォリオ
-PORTFOLIO_CSV_NAME = "V7_Combined_Portfolio_Calendar_1Buy.csv"
 
 JCD_MAP = {f"{i:02d}": name for i, name in enumerate(["桐生", "戸田", "江戸川", "平和島", "多摩川", "浜名湖", "蒲郡", "常滑", "津", "三国", "びわこ", "住之江", "尼崎", "鳴門", "丸亀", "児島", "宮島", "徳山", "下関", "若松", "芦屋", "福岡", "唐津", "大村"], 1)}
 PLACE_COORDS = {1: {"lat": 36.39, "lon": 139.30}, 2: {"lat": 35.82, "lon": 139.66}, 3: {"lat": 35.69, "lon": 139.86}, 4: {"lat": 35.58, "lon": 139.73}, 5: {"lat": 35.65, "lon": 139.51}, 6: {"lat": 34.69, "lon": 137.56}, 7: {"lat": 34.82, "lon": 137.21}, 8: {"lat": 34.88, "lon": 136.82}, 9: {"lat": 34.68, "lon": 136.51}, 10: {"lat": 36.21, "lon": 136.16}, 11: {"lat": 35.01, "lon": 135.85}, 12: {"lat": 34.60, "lon": 135.47}, 13: {"lat": 34.71, "lon": 135.38}, 14: {"lat": 34.20, "lon": 134.60}, 15: {"lat": 34.30, "lon": 133.79}, 16: {"lat": 34.46, "lon": 133.81}, 17: {"lat": 34.29, "lon": 132.30}, 18: {"lat": 34.03, "lon": 131.81}, 19: {"lat": 33.99, "lon": 130.98}, 20: {"lat": 33.89, "lon": 130.75}, 21: {"lat": 33.88, "lon": 130.66}, 22: {"lat": 33.59, "lon": 130.39}, 23: {"lat": 33.43, "lon": 129.98}, 24: {"lat": 32.89, "lon": 129.96}}
@@ -82,7 +80,7 @@ def prepare_ai_models(service):
     os.makedirs("Models_Stage1_2Fuku", exist_ok=True)
     os.makedirs("Models_Stage2_2Fuku", exist_ok=True)
     download_latest_file_by_name(service, TIDE_CSV_NAME)
-    download_latest_file_by_name(service, PORTFOLIO_CSV_NAME)  # 💡 この1行を追加！
+    download_latest_file_by_name(service, PORTFOLIO_CSV_NAME)  # 💡 修正②: カレンダーCSVのダウンロードを追加
     
     for pid in PROJECT_IDS:
         download_latest_file_by_name(service, f"LGBM_Stage1_2Fuku_{pid}.pkl", "Models_Stage1_2Fuku")
@@ -272,7 +270,7 @@ def transform_for_inference_v7(df_raw, df_tide):
                 raw_pc = row.get(f"Boat{b}_Past_{i}_Course")
 
                 pst, prk, pc = safe_float(raw_pst), safe_float(raw_prk), safe_float(raw_pc)
-                w = max(0.2, (15 - i) * 0.1)
+                w = max(0.2, 1.6 - (i * 0.1))
                 
                 mm_s1 += get_rank_point_s1(raw_prk) * w
                 if prk > 0: mm_s2 += get_rank_point_s2(raw_prk) * w
@@ -303,7 +301,8 @@ def transform_for_inference_v7(df_raw, df_tide):
             ib, ob = max(1, b - 1), min(6, b + 1)
             fs2.append({
                 'Race_ID': f"{dt}_{pid}_{rnum}", 'Project_ID_Calc': row.get('Project_ID'), 'Boat_Number': b,
-                'PlaceID': pid, 'Course_Type': COURSE_TYPE_MAP.get(pid, 3), 'Weather_Code': wc,
+                'PlaceID': pid, 'Scheduled_Time': sched, # 💡 ここで締切時刻を保持！
+                'Course_Type': COURSE_TYPE_MAP.get(pid, 3), 'Weather_Code': wc,
                 'Tailwind_Comp': tw, 'Crosswind_Comp': cw, 'Tide_Level_cm': tl, 'Tide_Trend': tt,
                 'Month_Cos': math.cos(2 * math.pi * int(str(dt)[4:6]) / 12.0), 'Tournament_Day': safe_float(row.get('Tournament_Day'), 1.0),
                 'Boat_WinRate': bdata[b]['wn'], 'Boat_WinRate_Local': bdata[b]['wl'], 'Boat_Motor': bdata[b]['m2'],
@@ -379,7 +378,7 @@ def run_ai_and_notify_v7(df_s1, df_s2):
                 if len(grp) != 6: continue
                 plid = int(grp['PlaceID'].iloc[0])
                 rnum = int(rid.split('_')[2])
-                place_name = JCD_MAP.get(f"{plid:02d}", "不明")  # 場名を取得
+                place_name = JCD_MAP.get(f"{plid:02d}", "不明")
                 cat = get_rough_cat(grp['Stage1_Rough_Prob'].iloc[0])
                 
                 # 🎯 ポートフォリオ照合 (O(1) ルックアップ)
@@ -404,8 +403,12 @@ def run_ai_and_notify_v7(df_s1, df_s2):
                     score = (p1[b1] * p2[b2]) + (p1[b2] * p2[b1])
                     sc[f"{b1}={b2}"] = score
                     
-                # 上位1点買い
-                buys.append({'p': plid, 'r': rnum, 'c': cat, 'b': [x[0] for x in sorted(sc.items(), key=lambda x: x[1], reverse=True)[:1]]})
+                sched_time = grp['Scheduled_Time'].iloc[0]  # 💡 表示用時刻を取得
+                
+                buys.append({
+                    'p': plid, 'r': rnum, 'c': cat, 'time': sched_time, 
+                    'b': [x[0] for x in sorted(sc.items(), key=lambda x: x[1], reverse=True)[:1]]
+                })
         except Exception as e: 
             logger.error(f"AI Error ({pid}): {e}")
 
@@ -433,7 +436,8 @@ def run_ai_and_notify_v7(df_s1, df_s2):
         msg = f"🤖 【V7 2連複・真・聖杯AI】\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n✅ 合致：{len(buys)}レース（上位1点買い）\n"
         for b in sorted(buys, key=lambda x: (x['p'], x['r'])):
             place_name = JCD_MAP.get(f"{b['p']:02d}", "不明")
-            msg += f"\n🚤 {place_name} {b['r']}R\n【{b['c']}】\n◎ {b['b'][0]}\n"
+            # 💡 メッセージに締切時刻を追加
+            msg += f"\n🚤 {place_name} {b['r']}R ({b['time']}締切)\n【{b['c']}】\n◎ {b['b'][0]}\n"
         send_line_broadcast(msg)
         logger.info(f"買い目送信完了: {len(buys)}レース")
 
