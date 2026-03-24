@@ -275,7 +275,7 @@ def transform_for_inference(df_raw, df_tide):
 
                 pst, prk, pc = safe_float(raw_pst), safe_float(raw_prk), safe_float(raw_pc)
                 # 💡 修正③: Momentum Scoreの計算式を正しい重み（直近1.5〜最古0.2）に修正！
-                w = max(0.2, 1.6 - (i * 0.1))
+                w = max(0.2, (15 - i) * 0.1)
                 
                 mm_s1 += get_rank_point_s1(raw_prk) * w
                 if prk > 0: mm_s2 += get_rank_point_s2(raw_prk) * w
