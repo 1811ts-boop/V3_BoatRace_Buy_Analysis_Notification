@@ -1,4 +1,4 @@
-name: V3 & V5 & V6 & V7 & V8 Daily BoatRace AI
+name: V9 & V3 Daily BoatRace AI
 
 on:
   schedule:
@@ -9,7 +9,7 @@ on:
 jobs:
   run-ai-models:
     runs-on: ubuntu-latest
-    timeout-minutes: 100 # 🛡️ 5モデル連続稼働のため、安全装置を100分に拡張
+    timeout-minutes: 60 # 🛡️ 2モデル稼働のため、安全装置を60分に最適化
 
     steps:
       - name: Checkout repository
@@ -27,9 +27,22 @@ jobs:
           pip install -r requirements.txt
 
       # -----------------------------------------------
-      # 🚀 1つ目：従来のV3システムを実行
+      # 🚀 1つ目：V9システム（LambdaRank 最新ハイブリッド版）を実行
+      # -----------------------------------------------
+      - name: Run V9 Daily Script
+        env:
+          TZ: 'Asia/Tokyo'
+          GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+        run: |
+          python V9_DailyRun_Batch.py
+
+      # -----------------------------------------------
+      # 🚀 2つ目：従来のV3システムを実行
       # -----------------------------------------------
       - name: Run V3 Daily Script
+        if: always() # 🛡️ V9がコケても必ず実行
         env:
           TZ: 'Asia/Tokyo'
           GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
@@ -37,55 +50,3 @@ jobs:
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
         run: |
           python main.py
-
-      # -----------------------------------------------
-      # 🚀 2つ目：V5システム（中穴EVスナイパー）を実行
-      # -----------------------------------------------
-      - name: Run V5 Daily Script
-        if: always() # 🛡️ V3がコケても必ず実行
-        env:
-          TZ: 'Asia/Tokyo'
-          GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
-          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
-        run: |
-          python v5_main.py
-
-      # -----------------------------------------------
-      # 🚀 3つ目：V6システムを実行
-      # -----------------------------------------------
-      - name: Run V6 Daily Script
-        if: always() # 🛡️ V3やV5がコケても必ず実行
-        env:
-          TZ: 'Asia/Tokyo'
-          GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
-          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
-        run: |
-          python V6_main.py  # ← 大文字・小文字など、実際のファイル名に正確に合わせてください
-
-      # -----------------------------------------------
-      # 🚀 4つ目：V7システム（2連複専用）を実行
-      # -----------------------------------------------
-      - name: Run V7 Daily Script
-        if: always() # 🛡️ V3やV5やV6がコケても必ず実行
-        env:
-          TZ: 'Asia/Tokyo'
-          GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
-          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
-        run: |
-          python V7_DailyRun.py
-
-      # -----------------------------------------------
-      # 🚀 5つ目：V8システム（2連単専用）を実行
-      # -----------------------------------------------
-      - name: Run V8 Daily Script
-        if: always() # 🛡️ V3～V7がコケても必ず実行
-        env:
-          TZ: 'Asia/Tokyo'
-          GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
-          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
-        run: |
-          python V8_DailyRun.py
