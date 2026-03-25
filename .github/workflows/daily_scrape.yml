@@ -12,28 +12,22 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4 # 💡 v4にアップデート推奨
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5 # 💡 v5にアップデート推奨
       with:
-        python-version: '3.10'
+        python-version: '3.12' # 💡 推論側とバージョンを合わせるのが安全です
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install requests beautifulsoup4 pandas tqdm pytz google-api-python-client google-auth-httplib2 google-auth-oauthlib
 
-    - name: Create Credentials JSON from Secret
-      env:
-        # ご用意いただいたシークレット名に変更済
-        GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
-      run: |
-        echo "$GCP_SA_CREDENTIALS" > credentials.json
-
+    # 💡 修正箇所: JSONファイルを作成するステップを削除し、直接スクリプトに環境変数を渡す
     - name: Run Scraper Script
       env:
-        # ご用意いただいたシークレット名に変更済
+        GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
         GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
       run: |
         python scraper.py
