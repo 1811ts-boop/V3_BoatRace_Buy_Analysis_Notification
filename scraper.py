@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 import pytz
 from tqdm import tqdm
 
-# Google Drive API関連
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
@@ -21,11 +20,11 @@ from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 # =============================================================================
 MAX_WORKERS = 3
 TIMEOUT_SEC = 20
-CHUNK_SIZE = 1000
 
 # GitHub Actionsの環境変数から情報を取得
 CREDENTIALS_FILE = 'credentials.json'
-TARGET_FILE_ID = os.environ.get('DRIVE_FILE_ID')
+TARGET_FOLDER_ID = os.environ.get('GDRIVE_FOLDER_ID')
+FILE_NAME = "BoatRace_Master_Updated_with_2Tan_2Fuku.csv"
 
 # ロガー設定
 logger = logging.getLogger("BoatRaceScraper")
@@ -35,7 +34,7 @@ sh.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
 logger.addHandler(sh)
 
 # =============================================================================
-# ヘルパー関数群（変更なし）
+# ヘルパー関数群
 # =============================================================================
 JCD_MAP = {
     "01":"桐生", "02":"戸田", "03":"江戸川", "04":"平和島", "05":"多摩川",
@@ -47,6 +46,7 @@ JCD_MAP = {
 zenkaku_map = str.maketrans('０１２３４５６７８９', '0123456789')
 
 def clean_str(s): return s.replace('\u3000', '').strip() if s else ""
+
 def get_float(s):
     if not s: return 0.0
     try:
@@ -99,6 +99,9 @@ def extract_additional_data(soup_list, target_date_str):
     data["Tournament_Day"] = str(len(unique_past_dates) + 1)
     return data
 
+# =============================================================================
+# コア・パーサー
+# =============================================================================
 def parse_single_race(task_tuple):
     date_str, jcd, r = task_tuple
     jcd_str = str(jcd).zfill(2)
@@ -249,7 +252,7 @@ def parse_single_race(task_tuple):
                     
     additional_data = extract_additional_data(soup_list, date_str)
     
-    row = {'Date': date_str, 'PlaceID': jcd_str, 'PlaceName': JCD_MAP.get(jcd_str, ""), 'RaceNum': r, 'RaceName': race_name, 'RaceInfo_URL': url_list, 'RaceResult_URL': url_result, 'Project_ID': project_id, 'Race_Type': race_type}
+    row = {'Date': date_str, 'PlaceID': jcd_str, 'PlaceName': JCD_MAP.get(jcd_str, ""), 'RaceNum': str(r), 'RaceName': race_name, 'RaceInfo_URL': url_list, 'RaceResult_URL': url_result, 'Project_ID': project_id, 'Race_Type': race_type}
     row.update(result_data)
     row.update(flags)
     row.update(racer_data)
@@ -257,12 +260,20 @@ def parse_single_race(task_tuple):
     return row
 
 # =============================================================================
-# Google Drive API 操作関数
+# Google Drive API 操作関数（堅牢なアトミック更新版）
 # =============================================================================
 def get_drive_service():
     scopes = ['https://www.googleapis.com/auth/drive']
     creds = service_account.Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
     return build('drive', 'v3', credentials=creds)
+
+def get_master_file_id(service, folder_id, file_name):
+    query = f"'{folder_id}' in parents and name='{file_name}' and trashed=false"
+    results = service.files().list(q=query, fields="files(id, name)").execute()
+    items = results.get('files', [])
+    if items:
+        return items[0]['id']
+    return None
 
 def download_csv(service, file_id):
     request = service.files().get_media(fileId=file_id)
@@ -274,27 +285,66 @@ def download_csv(service, file_id):
     fh.seek(0)
     return pd.read_csv(fh, dtype=str)
 
-def upload_csv(service, df, file_id):
-    temp_filename = 'temp_upload.csv'
-    df.to_csv(temp_filename, index=False, encoding='utf-8')
-    media = MediaFileUpload(temp_filename, mimetype='text/csv', resumable=True)
-    service.files().update(fileId=file_id, media_body=media).execute()
-    os.remove(temp_filename)
+def safe_upload_csv(service, df, folder_id, final_file_name, old_file_id):
+    """
+    論理的な欠陥を排除した真のアトミック更新。
+    ① ダミーをアップロード
+    ② 古い正式ファイルを backup_xxx にリネーム（退避）
+    ③ ダミーを正式ファイル名にリネーム
+    ④ backup_xxx を削除
+    """
+    local_tmp = 'temp_upload.csv'
+    df.to_csv(local_tmp, index=False, encoding='utf-8')
+    
+    temp_name = f"temp_{final_file_name}"
+    file_metadata = {'name': temp_name, 'parents': [folder_id]}
+    media = MediaFileUpload(local_tmp, mimetype='text/csv', resumable=True)
+    
+    logger.info(f"新データ（{temp_name}）をアップロード中...")
+    uploaded_file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+    new_file_id = uploaded_file.get('id')
+    logger.info("アップロード完了！安全なすり替え処理を実行します...")
+    
+    if old_file_id:
+        backup_name = f"backup_{final_file_name}"
+        logger.info(f"既存のファイルを退避中 ({backup_name})...")
+        service.files().update(fileId=old_file_id, body={'name': backup_name}).execute()
+            
+    logger.info(f"新ファイル名を正式名称（{final_file_name}）に変更中...")
+    service.files().update(fileId=new_file_id, body={'name': final_file_name}).execute()
+    
+    if old_file_id:
+        try:
+            logger.info("退避した古いマスターファイルを削除しています...")
+            service.files().delete(fileId=old_file_id).execute()
+        except Exception as e:
+            logger.warning(f"古いファイルの削除に失敗しましたが、更新自体は成功しています: {e}")
+            
+    os.remove(local_tmp)
+    logger.info("完全なアトミック更新が完了しました！")
 
 # =============================================================================
 # メイン処理
 # =============================================================================
 def main():
-    if not TARGET_FILE_ID:
-        print("エラー: DRIVE_FILE_IDが設定されていません。")
+    if not TARGET_FOLDER_ID:
+        logger.error("エラー: GDRIVE_FOLDER_ID が設定されていません。")
         return
         
-    print("Google Driveからマスターデータをダウンロードしています...")
     service = get_drive_service()
+    
+    logger.info(f"フォルダから '{FILE_NAME}' を探しています...")
+    old_file_id = get_master_file_id(service, TARGET_FOLDER_ID, FILE_NAME)
+    
+    if not old_file_id:
+        logger.error("エラー: フォルダ内に指定されたマスターファイルが見つかりません。")
+        return
+        
+    logger.info("マスターデータをダウンロードしています...")
     try:
-        df = download_csv(service, TARGET_FILE_ID)
+        df = download_csv(service, old_file_id)
     except Exception as e:
-        print(f"ファイルのダウンロードに失敗しました: {e}")
+        logger.error(f"ファイルのダウンロードに失敗しました: {e}")
         return
 
     max_date_str = str(df['Date'].max())
@@ -306,10 +356,10 @@ def main():
     end_date = (now_jst - timedelta(days=1)).replace(tzinfo=None)
 
     if start_date > end_date:
-        print(f"すでに最新のデータ（{max_date_str}）まで取得済みです。更新は行いません。")
+        logger.info(f"すでに最新のデータ（{max_date_str}）まで取得済みです。更新は行いません。")
         return
 
-    print(f"今回取得する期間: {start_date.strftime('%Y%m%d')} 〜 {end_date.strftime('%Y%m%d')}")
+    logger.info(f"今回取得する期間: {start_date.strftime('%Y%m%d')} 〜 {end_date.strftime('%Y%m%d')}")
 
     tasks = []
     d = start_date
@@ -320,7 +370,7 @@ def main():
                 tasks.append((d_str, j, r))
         d += timedelta(days=1)
 
-    print(f"=== スクレイピング開始 (予定タスク数: {len(tasks)}) ===")
+    logger.info(f"=== スクレイピング開始 (予定タスク数: {len(tasks)}) ===")
     new_results = []
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -329,20 +379,27 @@ def main():
             try:
                 res = f.result()
                 if res: new_results.append(res)
-            except Exception: pass
+            except Exception as e:
+                # 【修正点4】エラーが起きた場合に握りつぶさずログに残す
+                logger.error(f"タスク処理中にエラーが発生しました: {e}")
 
     if new_results:
-        print(f"計 {len(new_results)} 件の新規データを結合し、Google Driveへアップロードします...")
-        new_df = pd.DataFrame(new_results)
+        logger.info(f"計 {len(new_results)} 件の新規データを取得しました。結合処理を行います...")
+        
+        # 【修正点1】型推論によるゼロ落ちを防ぐため dtype=str を明記
+        new_df = pd.DataFrame(new_results, dtype=str)
+        
+        # カラム順を既存マスターに揃える
         for col in df.columns:
             if col not in new_df.columns: new_df[col] = ""
         new_df = new_df[df.columns]
         
         df = pd.concat([df, new_df], ignore_index=True)
-        upload_csv(service, df, TARGET_FILE_ID)
-        print("Google Driveのマスターデータ更新が完了しました！")
+        
+        # アトミックアップロード
+        safe_upload_csv(service, df, TARGET_FOLDER_ID, FILE_NAME, old_file_id)
     else:
-        print("新規データは見つかりませんでした。")
+        logger.info("新規データは見つかりませんでした。")
 
 if __name__ == "__main__":
     main()
