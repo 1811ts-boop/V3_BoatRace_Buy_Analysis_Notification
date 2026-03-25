@@ -531,28 +531,43 @@ def run_v9_inference_and_notify(df_s1, df_s2):
     logger.info("======================================")
 
     # LINE通知の組み立て
-    msg = f"🤖 【V9 LambdaRank ハイブリッドAI】\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n"
+    msg = f"🤖 V9 LambdaRank AI\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n"
     
     if not buys_2t and not buys_2f:
-        msg += "\n本日は「V9 新・聖杯カレンダー」に合致するレースがありませんでした🍵\n無駄撃ちせず資金を温存します。"
+        msg += "\n本日は勝負条件に合致するレースがありません。\n資金を温存します。"
         send_line_broadcast(msg)
         return
 
-    buys_2t = sorted(buys_2t, key=lambda x: x['time'])
-    buys_2f = sorted(buys_2f, key=lambda x: x['time'])
+    # 💡 2連単と2連複のリストを統合し、種類（アイコン）を追加
+    buys_all = []
+    for b in buys_2t:
+        b['type'] = '🎯2連単'
+        buys_all.append(b)
+    for b in buys_2f:
+        b['type'] = '🛡️2連複'
+        buys_all.append(b)
 
-    if buys_2t:
-        msg += f"\n🎯 【2連単 スナイパー】 {len(buys_2t)}件\n"
-        for b in buys_2t:
-            msg += f"🚤 {b['place']} {b['r']}R ({b['time']})\n👑 {b['grade']} / {b['cat']}\n🔥 買い目: 【{b['ticket']}】(自信度: {b['prob']*100:.1f}%)\n"
+    # 💡 ソート順を「場ID (p) → レース番号 (r) → 券種」に変更
+    buys_all = sorted(buys_all, key=lambda x: (x['p'], x['r'], x['type']))
+
+    msg += f"\n■ 本日の勝負レース (計{len(buys_all)}件)\n"
+    
+    # 💡 同じレースの場合はヘッダーを省略してスッキリ見せる工夫
+    prev_race_key = ""
+    for b in buys_all:
+        current_race_key = f"{b['p']}_{b['r']}"
+        
+        # 新しいレースの時だけ見出しを出す
+        if current_race_key != prev_race_key:
+            msg += f"\n[{b['time']}] {b['place']} {b['r']}R\n"
+            msg += f" ├ {b['grade']} / {b['cat']}\n"
+            prev_race_key = current_race_key
             
-    if buys_2f:
-        msg += f"\n🛡️ 【2連複 安定型】 {len(buys_2f)}件\n"
-        for b in buys_2f:
-            msg += f"🚤 {b['place']} {b['r']}R ({b['time']})\n👑 {b['grade']} / {b['cat']}\n🛡️ 買い目: 【{b['ticket']}】(自信度: {b['prob']*100:.1f}%)\n"
+        # 買い目は毎回出す
+        msg += f" └ {b['type']}: {b['ticket']} (推定勝率: {b['prob']*100:.1f}%)\n"
 
-    send_line_broadcast(msg)
-    logger.info(f"V9買い目送信完了: 2連単{len(buys_2t)}件, 2連複{len(buys_2f)}件")
+    send_line_broadcast(msg.strip())
+    logger.info(f"V9買い目送信完了: 買い目計{len(buys_all)}件")
 
 def main():
     logger.info("🚀 V9 System Start (LambdaRank Hybrid Edition)")
