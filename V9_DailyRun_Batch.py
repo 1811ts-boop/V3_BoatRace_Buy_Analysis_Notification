@@ -8,17 +8,21 @@ import pandas as pd
 import numpy as np
 import lightgbm as lgb
 import pickle
-import gc
 import itertools
 import concurrent.futures
 from datetime import datetime, timedelta, timezone
 from bs4 import BeautifulSoup
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
+import io
 import logging
+import gc
 import warnings
 warnings.filterwarnings("ignore")
 
 # =============================================================================
-# 1. 環境設定・定数（GitHub Actions / Colab ハイブリッド対応）
+# 1. 環境設定・定数
 # =============================================================================
 logger = logging.getLogger("V9_DailyRun_LambdaRank")
 logger.setLevel(logging.INFO)
@@ -30,20 +34,14 @@ if not logger.handlers:
 JST = timezone(timedelta(hours=9), 'JST')
 TODAY_OBJ = datetime.now(JST)
 
-# 💡 実行環境の自動判定（GitHub Actionsならカレントディレクトリ、それ以外はColab想定）
-if os.environ.get("GITHUB_ACTIONS") == "true":
-    BASE_DIR = "."
-else:
-    BASE_DIR = "/content/drive/MyDrive/BoatRaceData"
-
+GCP_SA_CREDENTIALS = os.environ.get("GCP_SA_CREDENTIALS")
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 
-TIDE_CSV_NAME = os.path.join(BASE_DIR, "Tide_Master_2020_2026.csv")
-MASTER_CSV_NAME = os.path.join(BASE_DIR, "BoatRace_Master_Updated_with_2Tan_2Fuku.csv")
-
-PORTFOLIO_2TAN = os.path.join(BASE_DIR, "V9_Portfolio_Final_2Tan.csv")
-PORTFOLIO_2FUKU = os.path.join(BASE_DIR, "V9_Portfolio_Final_2Fuku.csv")
+TIDE_CSV_NAME = "Tide_Master_2020_2026.csv"
+MASTER_CSV_NAME = "BoatRace_Master_Updated_with_2Tan_2Fuku.csv"
+PORTFOLIO_2TAN = "V9_Portfolio_Final_2Tan.csv"
+PORTFOLIO_2FUKU = "V9_Portfolio_Final_2Fuku.csv"
 
 PROJECT_IDS = ['P0_SG', 'P1_G1_Elite', 'P2_Ladies', 'P3_General_Std', 'P4_Planning']
 MAX_WORKERS = 3  
@@ -56,10 +54,45 @@ PLACE_COORDS = {1: {"lat": 36.39, "lon": 139.30}, 2: {"lat": 35.82, "lon": 139.6
 TRACK_ANGLES = {1: 163.6, 2: 101.6, 3: 17.8, 4: 355.6, 5: 273.4, 6: 187.0, 7: 243.7, 8: 271.3, 9: 282.1, 10: 152.9, 11: 192.5, 12: 186.1, 13: 250.5, 14: 109.5, 15: 333.3, 16: 181.1, 17: 228.7, 18: 299.0, 19: 222.8, 20: 244.1, 21: 90.9, 22: 68.1, 23: 212.4, 24: 50.6}
 COURSE_TYPE_MAP = {24: 1, 18: 1, 21: 1, 19: 1, 13: 1, 10: 1, 5: 2, 6: 2, 7: 2, 8: 2, 9: 2, 1: 2, 12: 3, 15: 3, 16: 3, 17: 3, 20: 3, 23: 3, 2: 4, 4: 4, 14: 4, 11: 4, 22: 4, 3: 5}
 
+# =============================================================================
+# 2. Google Drive & API連携 (V7継承)
+# =============================================================================
+def get_drive_service():
+    if not GCP_SA_CREDENTIALS: return None
+    creds_dict = json.loads(GCP_SA_CREDENTIALS)
+    creds = service_account.Credentials.from_service_account_info(creds_dict)
+    return build('drive', 'v3', credentials=creds)
+
+def download_latest_file_by_name(service, file_name, save_dir="."):
+    query = f"name='{file_name}' and trashed=false"
+    res = service.files().list(q=query, orderBy="createdTime desc", fields="files(id, name)").execute()
+    if not res.get('files'): return False
+    
+    file_id = res['files'][0]['id']
+    req = service.files().get_media(fileId=file_id)
+    with io.FileIO(os.path.join(save_dir, file_name), 'wb') as fh:
+        downloader = MediaIoBaseDownload(fh, req)
+        done = False
+        while not done: _, done = downloader.next_chunk()
+    return True
+
+def prepare_ai_models(service):
+    logger.info("☁️ V9専用 AIモデル・マスターデータ・ポートフォリオをダウンロードします...")
+    os.makedirs("Models_Stage1_V9", exist_ok=True)
+    os.makedirs("Models_Stage2_V9", exist_ok=True)
+    
+    download_latest_file_by_name(service, TIDE_CSV_NAME)
+    logger.info("   - マスターデータ(500MB超)をダウンロード中...少々お待ちください")
+    download_latest_file_by_name(service, MASTER_CSV_NAME)
+    download_latest_file_by_name(service, PORTFOLIO_2TAN)
+    download_latest_file_by_name(service, PORTFOLIO_2FUKU)
+    
+    for pid in PROJECT_IDS:
+        download_latest_file_by_name(service, f"LGBM_Stage1_V9_{pid}.pkl", "Models_Stage1_V9")
+        download_latest_file_by_name(service, f"LGBM_Stage2_LambdaRank_V9_{pid}.pkl", "Models_Stage2_V9")
+
 def send_line_broadcast(msg):
-    if not LINE_CHANNEL_ACCESS_TOKEN: 
-        print(msg)
-        return
+    if not LINE_CHANNEL_ACCESS_TOKEN: return
     url = "https://api.line.me/v2/bot/message/broadcast"
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"}
     try:
@@ -70,8 +103,7 @@ def send_line_broadcast(msg):
 
 WEATHER_CACHE = {}
 def fetch_weather(place_id, target_time_str):
-    # 💡 APIキーがない場合は通信せず安全にデフォルト値を返す
-    if not OPENWEATHER_API_KEY: return 0.0, 0.0, 1
+    if not OPENWEATHER_API_KEY: return 0.0, 0.0, 1 # フェイルセーフ
     try:
         hour = target_time_str.split(':')[0]
         cache_key = f"{place_id}_{hour}" 
@@ -94,23 +126,26 @@ def fetch_weather(place_id, target_time_str):
     except: return 0.0, 0.0, 1
 
 # =============================================================================
-# 2. V9 最新ハードウェア辞書の動的生成 (Master CSVから直近状態をスキャン)
+# 3. V9 最新ハードウェア辞書の動的生成
 # =============================================================================
 def safe_float(val, default=0.0):
     if pd.isna(val) or val == "" or val is None: return default
     try: return float(val)
     except ValueError:
-        clean_val = re.sub(r'[^\d.-]', '', str(val))
-        return float(clean_val) if clean_val not in ('', '-', '.') else default
+        s = str(val).strip().translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+        clean_val = re.sub(r'[^\d.-]', '', s)
+        if clean_val in ('', '-', '.', '-.'): return default
+        try: return float(clean_val)
+        except ValueError: return default
 
 def get_rank_point(rank_val):
     r = safe_float(rank_val, 99)
     return {1:10, 2:8, 3:6, 4:4, 5:2, 6:1}.get(r, 0.0)
 
 def build_latest_hardware_dict():
-    logger.info("⚙️ 大元マスターからV9用『最新ハードウェア辞書』をオンザフライ生成します...")
+    logger.info("⚙️ ダウンロードしたマスターCSVからV9用『最新ハードウェア辞書』を構築中...")
     if not os.path.exists(MASTER_CSV_NAME):
-        logger.warning(f"⚠️ {MASTER_CSV_NAME} が見つかりません。モーター特徴量は0として進行します。")
+        logger.warning(f"⚠️ マスターデータが見つかりません。モーター予測値はデフォルト(0)で進行します。")
         return {}, {}
         
     cols = ['Date', 'PlaceID'] + [f'R{b}_Motor_No' for b in range(1,7)] + [f'R{b}_Boat_No' for b in range(1,7)] + \
@@ -134,9 +169,9 @@ def build_latest_hardware_dict():
         tmp['Rank_Point'] = df[f'Result_Boat{b}_Rank'].apply(get_rank_point)
         records.append(tmp)
 
-    df_hw = pd.concat(records, ignore_index=True)
-    df_hw = df_hw.dropna(subset=['Date_Parsed']).sort_values(by=['PlaceID', 'Motor_No', 'Date_Parsed'])
+    df_hw = pd.concat(records, ignore_index=True).dropna(subset=['Date_Parsed'])
     
+    df_hw = df_hw.sort_values(by=['PlaceID', 'Motor_No', 'Date_Parsed'])
     df_hw['M_Time_Gap'] = df_hw.groupby(['PlaceID', 'Motor_No'])['Date_Parsed'].diff().dt.days
     df_hw['Motor_Generation_ID'] = df_hw.groupby(['PlaceID', 'Motor_No'])['M_Time_Gap'].apply(lambda x: (x > 60).cumsum())
     
@@ -150,14 +185,8 @@ def build_latest_hardware_dict():
 
     df_hw['Motor_Runs'] = grp_m.cumcount() + 1
     df_hw['Boat_Deterioration_Idx'] = grp_b.cumcount() + 1
-
-    df_hw['M_RP_Sum'] = grp_m['Rank_Point'].cumsum()
-    df_hw['M_DW_Sum'] = grp_m['Driver_WinRate'].cumsum()
-    df_hw['B_RP_Sum'] = grp_b['Rank_Point'].cumsum()
-    df_hw['B_DW_Sum'] = grp_b['Driver_WinRate'].cumsum()
-
-    df_hw['True_Motor_Score'] = (df_hw['M_RP_Sum'] - df_hw['M_DW_Sum']) / df_hw['Motor_Runs']
-    df_hw['True_Boat_Score'] = (df_hw['B_RP_Sum'] - df_hw['B_DW_Sum']) / df_hw['Boat_Deterioration_Idx']
+    df_hw['True_Motor_Score'] = (grp_m['Rank_Point'].cumsum() - grp_m['Driver_WinRate'].cumsum()) / df_hw['Motor_Runs']
+    df_hw['True_Boat_Score'] = (grp_b['Rank_Point'].cumsum() - grp_b['Driver_WinRate'].cumsum()) / df_hw['Boat_Deterioration_Idx']
 
     latest_m = df_hw.groupby(['PlaceID', 'Motor_No']).last().reset_index()
     latest_b = df_hw.groupby(['PlaceID', 'Boat_No']).last().reset_index()
@@ -171,7 +200,7 @@ def build_latest_hardware_dict():
     return dict_motor, dict_boat
 
 # =============================================================================
-# 3. スクレイピング処理
+# 4. スクレイピング処理
 # =============================================================================
 def clean_str(s): return s.replace('\u3000', '').strip() if s else ""
 def clean_rank_value(val):
@@ -267,7 +296,7 @@ def scrape_today(today_obj):
     return pd.DataFrame(res)
 
 # =============================================================================
-# 4. V9 特徴量パイプライン
+# 5. V9 特徴量パイプライン
 # =============================================================================
 def get_rank_point_s1(rank_val):
     if pd.isna(rank_val) or rank_val == "" or rank_val is None: return -5.0
@@ -276,6 +305,7 @@ def get_rank_point_s1(rank_val):
 
 def transform_for_v9_inference(df_raw, df_tide, dict_motor, dict_boat):
     fs1, fs2 = [], []
+    error_count = 0 
     
     for _, row in df_raw.iterrows():
         pid = int(safe_float(row.get('PlaceID')))
@@ -283,8 +313,12 @@ def transform_for_v9_inference(df_raw, df_tide, dict_motor, dict_boat):
         dt = int(row.get('Date', 0))
         proj_id = row.get('Project_ID')
         
+        # 🛡️ V7/V8継承: バリデーションゲート
         win_nat_sum = sum(safe_float(row.get(f"R{b}_WinRate_National")) for b in range(1, 7))
-        if win_nat_sum < 15.0: continue 
+        if win_nat_sum < 15.0: 
+            error_count += 1
+            logger.warning(f"⚠️ {pid}場 {rnum}R: 勝率データ異常。推論をスキップします。")
+            continue
 
         sched = str(row.get('Scheduled_Time', '12:00'))
         ws, wd, wc = fetch_weather(pid, sched)
@@ -357,10 +391,13 @@ def transform_for_v9_inference(df_raw, df_tide, dict_motor, dict_boat):
                 'True_Motor_Score': bdata[b]['t_motor'], 'True_Boat_Score': bdata[b]['t_boat'], 'Boat_Deterioration_Idx': bdata[b]['b_idx']
             })
 
+    if error_count > 0:
+        send_line_broadcast(f"⚠️【警告】スクレイピングデータ異常（{error_count}レース）。誤推論を防ぐためスキップしました。")
+
     return pd.DataFrame(fs1), pd.DataFrame(fs2)
 
 # =============================================================================
-# 5. V9 ハイブリッド推論 ＆ LINE通知
+# 6. V9 ハイブリッド推論 ＆ LINE通知
 # =============================================================================
 def get_rough_cat(p): return "超堅め(0-20%)" if p < 0.2 else "やや堅め(20-40%)" if p < 0.4 else "普通(40-60%)" if p < 0.6 else "やや荒れ(60-80%)" if p < 0.8 else "大荒れ(80-100%)"
 
@@ -390,30 +427,32 @@ def calculate_probabilities(scores):
 def run_v9_inference_and_notify(df_s1, df_s2):
     current_month = TODAY_OBJ.month
     
-    df_port_2t = pd.read_csv(PORTFOLIO_2TAN) if os.path.exists(PORTFOLIO_2TAN) else pd.DataFrame()
-    df_port_2f = pd.read_csv(PORTFOLIO_2FUKU) if os.path.exists(PORTFOLIO_2FUKU) else pd.DataFrame()
+    if not os.path.exists(PORTFOLIO_2TAN) or not os.path.exists(PORTFOLIO_2FUKU):
+        send_line_broadcast("❌ V9ポートフォリオファイルが読み込めませんでした。稼働を停止します。")
+        return
+        
+    df_port_2t = pd.read_csv(PORTFOLIO_2TAN)
+    df_port_2f = pd.read_csv(PORTFOLIO_2FUKU)
     
+    # 検索高速化のための辞書作成 (Month, Project_ID, 場名, Rough_Category) -> True
     dict_2t = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): True for _, row in df_port_2t.iterrows()}
     dict_2f = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): True for _, row in df_port_2f.iterrows()}
     
-    if not dict_2t and not dict_2f:
-        send_line_broadcast("❌ V9ポートフォリオファイルが読み込めませんでした。稼働を停止します。")
-        return
-
     buys_2t = []
     buys_2f = []
+    debug_logs = {} # 📊 V7継承: デバッグログ格納用
 
     for pid in PROJECT_IDS:
         ds1 = df_s1[df_s1['Project_ID'] == pid].copy()
         if ds1.empty: continue
             
         try:
-            m1_path = os.path.join(BASE_DIR, f"Models_Stage1_V9/LGBM_Stage1_V9_{pid}.pkl")
+            m1_path = f"Models_Stage1_V9/LGBM_Stage1_V9_{pid}.pkl"
             if not os.path.exists(m1_path): continue
             with open(m1_path, 'rb') as f: m1 = pickle.load(f)
             
             X1 = ds1[m1.feature_name()].copy()
-            # 💡 安全対策：欠損値を埋めて確実にfloat型に変換
+            # 🛡️ 安全対策：欠損値を埋めて確実にfloat型に変換
             for col in X1.columns: X1[col] = pd.to_numeric(X1[col], errors='coerce').fillna(0.0)
             
             for c, cats in CATEGORIES_DEF_S1.items():
@@ -421,18 +460,19 @@ def run_v9_inference_and_notify(df_s1, df_s2):
             ds1['Stage1_Rough_Prob'] = m1.predict(X1.astype(float).values)
             
             ds2 = df_s2[df_s2['Project_ID'] == pid].merge(ds1[['Race_ID', 'Stage1_Rough_Prob']], on='Race_ID', how='inner')
-            m2_path = os.path.join(BASE_DIR, f"Models_Stage2_V9/LGBM_Stage2_LambdaRank_V9_{pid}.pkl")
+            m2_path = f"Models_Stage2_V9/LGBM_Stage2_LambdaRank_V9_{pid}.pkl"
             if not os.path.exists(m2_path): continue
             with open(m2_path, 'rb') as f: m2 = pickle.load(f)
             
             X2 = ds2[m2.feature_name()].copy()
-            # 💡 安全対策：欠損値を埋めて確実にfloat型に変換
+            # 🛡️ 安全対策：欠損値を埋めて確実にfloat型に変換
             for col in X2.columns: X2[col] = pd.to_numeric(X2[col], errors='coerce').fillna(0.0)
             
             for c, cats in CATEGORIES_DEF_S2.items():
                 if c in X2.columns: X2[c] = pd.Categorical(X2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False).codes
             ds2['Pred_Score'] = m2.predict(X2.astype(float).values)
             
+            # ポートフォリオ照合と確率計算
             for rid, grp in ds2.groupby('Race_ID', sort=False):
                 if len(grp) != 6: continue
                 
@@ -445,7 +485,16 @@ def run_v9_inference_and_notify(df_s1, df_s2):
                 hit_2t = dict_2t.get((current_month, pid, place_name, cat), False)
                 hit_2f = dict_2f.get((current_month, pid, place_name, cat), False)
                 
-                if hit_2t or hit_2f:
+                is_hit = hit_2t or hit_2f
+                reason = []
+                if hit_2t: reason.append("2連単")
+                if hit_2f: reason.append("2連複")
+                reason_str = f"✅ 合致: {','.join(reason)}" if is_hit else "❌ 当場・当条件の勝負指定なし"
+                
+                if plid not in debug_logs: debug_logs[plid] = []
+                debug_logs[plid].append({'rnum': rnum, 'pid': pid, 'cat': cat, 'is_hit': is_hit, 'reason': reason_str})
+                
+                if is_hit:
                     scores = {int(r['Boat_Number']): float(r['Pred_Score']) for _, r in grp.iterrows()}
                     p_2tan, p_2fuku = calculate_probabilities(scores)
                     grade = "SG" if pid == "P0_SG" else "G1" if pid == "P1_G1_Elite" else "女子" if pid == "P2_Ladies" else "一般" if pid == "P3_General_Std" else "企画"
@@ -461,8 +510,24 @@ def run_v9_inference_and_notify(df_s1, df_s2):
         except Exception as e: 
             logger.error(f"AI Error ({pid}): {e}")
 
+    # 📊 判定プロセスの詳細コンソール出力 (V7継承)
+    logger.info("📊 === V9 AI推論 1レースごとの判定レポート ===")
+    for plid in sorted(debug_logs.keys()):
+        place_name = JCD_MAP.get(f"{plid:02d}", "不明")
+        races = sorted(debug_logs[plid], key=lambda x: x['rnum'])
+        pid_groups = {}
+        for r in races:
+            pid_groups.setdefault(r['pid'], []).append(r)
+            
+        for p_id, p_races in pid_groups.items():
+            logger.info(f"🚤 {place_name} ({p_id}) - {len(p_races)}レース分析")
+            for r in p_races:
+                match_mark = "✅ 買い" if r['is_hit'] else "❌ 見送"
+                logger.info(f"   {r['rnum']:>2}R: [{r['cat']}] -> {match_mark} (理由: {r['reason']})")
+    logger.info("======================================")
+
     # LINE通知の組み立て
-    msg = f"🤖 【V9 LambdaRank AI】\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n"
+    msg = f"🤖 【V9 LambdaRank ハイブリッドAI】\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n"
     
     if not buys_2t and not buys_2f:
         msg += "\n本日は「V9 新・聖杯カレンダー」に合致するレースがありませんでした🍵\n無駄撃ちせず資金を温存します。"
@@ -478,7 +543,7 @@ def run_v9_inference_and_notify(df_s1, df_s2):
             msg += f"🚤 {b['place']} {b['r']}R ({b['time']})\n👑 {b['grade']} / {b['cat']}\n🔥 買い目: 【{b['ticket']}】(自信度: {b['prob']*100:.1f}%)\n"
             
     if buys_2f:
-        msg += f"\n🎯 【2連複 安定型】 {len(buys_2f)}件\n"
+        msg += f"\n🛡️ 【2連複 安定型】 {len(buys_2f)}件\n"
         for b in buys_2f:
             msg += f"🚤 {b['place']} {b['r']}R ({b['time']})\n👑 {b['grade']} / {b['cat']}\n🛡️ 買い目: 【{b['ticket']}】(自信度: {b['prob']*100:.1f}%)\n"
 
@@ -487,6 +552,12 @@ def run_v9_inference_and_notify(df_s1, df_s2):
 
 def main():
     logger.info("🚀 V9 System Start (LambdaRank Hybrid Edition)")
+    
+    # 💡 GitHub Actions環境の場合のみ、Driveから必須ファイルを一式ダウンロード
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        srv = get_drive_service()
+        if srv: prepare_ai_models(srv)
+        else: logger.error("⚠️ GCP認証に失敗したためダウンロードをスキップします")
     
     dict_motor, dict_boat = build_latest_hardware_dict()
     dtide = pd.read_csv(TIDE_CSV_NAME) if os.path.exists(TIDE_CSV_NAME) else pd.DataFrame(columns=['DateInt', 'PlaceID', 'Hour', 'Tide_Level_cm', 'Tide_Trend'])
