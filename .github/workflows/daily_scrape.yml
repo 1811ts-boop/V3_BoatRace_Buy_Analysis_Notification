@@ -2,9 +2,9 @@ name: Daily BoatRace Scraper
 
 on:
   schedule:
-    # UTC時間で指定 (UTC 19:00 = JST 04:00)
+    # 毎日 日本時間 午前4時に実行 (UTC 19:00)
     - cron: '0 19 * * *'
-  workflow_dispatch: # 手動実行ボタンを有効化
+  workflow_dispatch: # 手動実行ボタン
 
 jobs:
   scrape-and-update:
@@ -26,12 +26,14 @@ jobs:
 
     - name: Create Credentials JSON from Secret
       env:
-        GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        # ご用意いただいたシークレット名に変更済
+        GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
       run: |
-        echo "$GCP_SA_KEY" > credentials.json
+        echo "$GCP_SA_CREDENTIALS" > credentials.json
 
     - name: Run Scraper Script
       env:
-        DRIVE_FILE_ID: ${{ secrets.DRIVE_FILE_ID }}
+        # ご用意いただいたシークレット名に変更済
+        GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
       run: |
         python scraper.py
