@@ -5,6 +5,7 @@ import re
 import time
 import os
 import io
+import json
 import logging
 import concurrent.futures
 from datetime import datetime, timedelta
@@ -14,93 +15,85 @@ from tqdm import tqdm
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
+import warnings
+warnings.filterwarnings("ignore")
 
 # =============================================================================
-# 設定
+# 1. 設定・環境変数
 # =============================================================================
 MAX_WORKERS = 3
 TIMEOUT_SEC = 20
 
-# GitHub Actionsの環境変数から情報を取得
-CREDENTIALS_FILE = 'credentials.json'
+# GitHub Actionsの環境変数から取得（V9推論コードと統一）
+GCP_SA_CREDENTIALS = os.environ.get("GCP_SA_CREDENTIALS")
 TARGET_FOLDER_ID = os.environ.get('GDRIVE_FOLDER_ID')
 FILE_NAME = "BoatRace_Master_Updated_with_2Tan_2Fuku.csv"
 
 # ロガー設定
-logger = logging.getLogger("BoatRaceScraper")
+logger = logging.getLogger("V9_Master_Updater")
 logger.setLevel(logging.INFO)
 sh = logging.StreamHandler()
 sh.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
-logger.addHandler(sh)
+if not logger.handlers:
+    logger.addHandler(sh)
 
 # =============================================================================
-# ヘルパー関数群
+# 2. ヘルパー関数群（V9の推論ロジックと完全同期）
 # =============================================================================
-JCD_MAP = {
-    "01":"桐生", "02":"戸田", "03":"江戸川", "04":"平和島", "05":"多摩川",
-    "06":"浜名湖", "07":"蒲郡", "08":"常滑", "09":"津", "10":"三国",
-    "11":"びわこ", "12":"住之江", "13":"尼崎", "14":"鳴門", "15":"丸亀",
-    "16":"児島", "17":"宮島", "18":"徳山", "19":"下関", "20":"若松",
-    "21":"芦屋", "22":"福岡", "23":"唐津", "24":"大村"
-}
-zenkaku_map = str.maketrans('０１２３４５６７８９', '0123456789')
+JCD_MAP = {f"{i:02d}": name for i, name in enumerate(["桐生", "戸田", "江戸川", "平和島", "多摩川", "浜名湖", "蒲郡", "常滑", "津", "三国", "びわこ", "住之江", "尼崎", "鳴門", "丸亀", "児島", "宮島", "徳山", "下関", "若松", "芦屋", "福岡", "唐津", "大村"], 1)}
 
 def clean_str(s): return s.replace('\u3000', '').strip() if s else ""
 
-def get_float(s):
-    if not s: return 0.0
-    try:
-        match = re.search(r'(\d+\.\d+|\d+)', s)
-        return float(match.group(1)) if match else 0.0
-    except: return 0.0
+# 💡 修正1: フライング等に対応したV9完全互換の float 変換
+def safe_float(val, default=0.0):
+    if pd.isna(val) or val == "" or val is None: return default
+    try: return float(val)
+    except ValueError:
+        s = str(val).strip().translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+        clean_val = re.sub(r'[^\d.-]', '', s)
+        if clean_val in ('', '-', '.', '-.'): return default
+        try: return float(clean_val)
+        except ValueError: return default
 
 def clean_rank_value(val):
     if not val: return None
-    val_str = str(val).strip().translate(zenkaku_map)
-    if val_str in ['1', '2', '3', '4', '5', '6']: return float(val_str)
-    return None
+    v = str(val).strip().translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+    return float(v) if v in ['1', '2', '3', '4', '5', '6'] else None
 
 def fetch_soup(url, retries=3):
     for _ in range(retries):
         try:
-            time.sleep(0.5)
+            time.sleep(1.0)
             resp = requests.get(url, timeout=TIMEOUT_SEC)
             if resp.status_code == 200:
                 resp.encoding = resp.apparent_encoding
                 return BeautifulSoup(resp.text, 'html.parser')
-        except: time.sleep(1)
+        except: time.sleep(2)
     return None
 
-def extract_additional_data(soup_list, target_date_str):
+# 💡 修正2: V9推論コードと全く同じ節間（Tournament_Day）算出ロジック
+def extract_additional_data(soup_list):
     data = {}
-    tbodies = soup_list.find_all('tbody', class_='is-fs12')
     unique_past_dates = set()
-    for boat_idx, tbody in enumerate(tbodies[:6], 1):
+    for boat_idx, tbody in enumerate(soup_list.find_all('tbody', class_='is-fs12')[:6], 1):
         trs = tbody.find_all('tr')
         if len(trs) < 4: continue
-        start_col_idx = 9
-        tds_race_no = trs[0].find_all('td')
-        tds_course = trs[1].find_all('td')
-        tds_st = trs[2].find_all('td')
-        tds_rank = trs[3].find_all('td')
-        loop_range = min(len(tds_course), 14)
-        for i in range(loop_range):
-            if start_col_idx + i < len(tds_race_no):
-                prefix = f"Boat{boat_idx}_Past_{i+1}"
-                data[f"{prefix}_RaceNo"] = clean_str(tds_race_no[start_col_idx + i].get_text(strip=True))
-                data[f"{prefix}_Course"] = clean_str(tds_course[i].get_text(strip=True))
-                data[f"{prefix}_ST"] = clean_str(tds_st[i].get_text(strip=True))
-                data[f"{prefix}_Rank"] = clean_rank_value(tds_rank[i].get_text(strip=True))
+        tds_course, tds_st, tds_rank = trs[1].find_all('td'), trs[2].find_all('td'), trs[3].find_all('td')
+        for i in range(min(len(tds_course), 14)):
+            if 9 + i < len(trs[0].find_all('td')):
+                data[f"Boat{boat_idx}_Past_{i+1}_Course"] = clean_str(tds_course[i].get_text(strip=True))
+                data[f"Boat{boat_idx}_Past_{i+1}_ST"] = clean_str(tds_st[i].get_text(strip=True))
+                data[f"Boat{boat_idx}_Past_{i+1}_Rank"] = clean_rank_value(tds_rank[i].get_text(strip=True))
         for td in tds_rank:
-            a_tag = td.find('a')
-            if a_tag and 'href' in a_tag.attrs:
-                match = re.search(r'hd=(\d{8})', a_tag['href'])
-                if match and match.group(1) < target_date_str: unique_past_dates.add(match.group(1))
+            a = td.find('a')
+            if a and 'href' in a.attrs:
+                m = re.search(r'hd=(\d{8})', a['href'])
+                if m: unique_past_dates.add(m.group(1))
     data["Tournament_Day"] = str(len(unique_past_dates) + 1)
     return data
 
 # =============================================================================
-# コア・パーサー
+# 3. コア・パーサー
 # =============================================================================
 def parse_single_race(task_tuple):
     date_str, jcd, r = task_tuple
@@ -108,7 +101,7 @@ def parse_single_race(task_tuple):
     
     url_list = f"https://www.boatrace.jp/owpc/pc/race/racelist?rno={r}&jcd={jcd_str}&hd={date_str}"
     soup_list = fetch_soup(url_list)
-    if not soup_list or "データがありません" in soup_list.text: return None
+    if not soup_list or "データがありません" in soup_list.text or "中止" in soup_list.text: return None
     
     url_result = f"https://www.boatrace.jp/owpc/pc/race/raceresult?rno={r}&jcd={jcd_str}&hd={date_str}"
     soup_result = fetch_soup(url_result)
@@ -122,8 +115,8 @@ def parse_single_race(task_tuple):
         'Is_General': 0,
         'Is_Lady': 1 if any(w in race_name for w in ['レディース', '女子', 'ヴィーナス', 'オール女子']) else 0,
         'Is_Venus': 1 if 'ヴィーナス' in race_name else 0,
-        'Is_Rookie': 1 if 'ルーキー' in race_name or 'ヤング' in race_name or '若手' in race_name else 0,
-        'Is_Master': 1 if 'マスターズ' in race_name or '名人' in race_name else 0
+        'Is_Rookie': 1 if any(w in race_name for w in ['ルーキー', 'ヤング', '若手']) else 0,
+        'Is_Master': 1 if any(w in race_name for w in ['マスターズ', '名人']) else 0
     }
     if sum([flags['Is_SG'], flags['Is_G1'], flags['Is_G2'], flags['Is_G3']]) == 0: flags['Is_General'] = 1
     
@@ -134,10 +127,10 @@ def parse_single_race(task_tuple):
     elif '特選' in race_name: race_type = "特選"
     
     project_id = "P3_General_Std"
-    if flags['Is_Lady'] == 1: project_id = "P2_Ladies"
-    elif flags['Is_SG'] == 1: project_id = "P0_SG"
-    elif flags['Is_G1'] == 1 and flags['Is_Rookie'] == 0: project_id = "P1_G1_Elite"
-    elif flags['Is_General'] == 1 and (r == 1 or "進入固定" in race_name or "シード" in race_name): project_id = "P4_Planning"
+    if flags['Is_SG']: project_id = "P0_SG"
+    elif flags['Is_G1'] and not flags['Is_Rookie']: project_id = "P1_G1_Elite"
+    elif flags['Is_General'] and (r == 1 or "進入固定" in race_name or "シード" in race_name): project_id = "P4_Planning"
+    if flags['Is_Lady']: project_id = "P2_Ladies"
 
     racer_data = {}
     tbodies = soup_list.find_all('tbody', class_=lambda x: x and 'is-fs12' in x)
@@ -167,7 +160,7 @@ def parse_single_race(task_tuple):
                 lines = list(tds[6+idx].stripped_strings)
                 racer_data[f"{pfx}{key}_No"] = lines[0]
                 racer_data[f"{pfx}{key}_2Ren"] = lines[1]
-                racer_data[f"{pfx}{key}_3Ren"] = lines[2]
+                if len(lines) > 2: racer_data[f"{pfx}{key}_3Ren"] = lines[2]
         except: pass
 
     result_data = {
@@ -194,7 +187,7 @@ def parse_single_race(task_tuple):
                 payout_span = row_val.find('span', class_='is-payout1')
                 if payout_span: result_data['Payout_2Tan'] = re.sub(r'[^\d]', '', payout_span.text)
                 number_div = row_val.find('div', class_='numberSet1_row')
-                if number_div: result_data['Result_2Tan_Bet'] = "".join([n.text.strip() for n in number_div.find_all('span')])
+                if number_div: result_data['Result_2Tan_Bet'] = "-".join([n.text.strip() for n in number_div.find_all('span', class_='numberSet1_number')])
         except: pass
         try:
             td_2fuku = soup_result.find('td', string=re.compile(r'2連複'))
@@ -203,7 +196,7 @@ def parse_single_race(task_tuple):
                 payout_span = row_val.find('span', class_='is-payout1')
                 if payout_span: result_data['Payout_2Fuku'] = re.sub(r'[^\d]', '', payout_span.text)
                 number_div = row_val.find('div', class_='numberSet1_row')
-                if number_div: result_data['Result_2Fuku_Bet'] = "".join([n.text.strip() for n in number_div.find_all('span')])
+                if number_div: result_data['Result_2Fuku_Bet'] = "=".join([n.text.strip() for n in number_div.find_all('span', class_='numberSet1_number')])
         except: pass
 
         try:
@@ -221,7 +214,7 @@ def parse_single_race(task_tuple):
             if w_block:
                 for cls_name, key in [('is-wind', 'WindSpeed'), ('is-wave', 'WaveHeight'), ('is-waterTemperature', 'WaterTemp')]:
                     unit = w_block.find('div', class_=cls_name)
-                    if unit and unit.find('span', class_='weather1_bodyUnitLabelData'): result_data[key] = get_float(unit.find('span', class_='weather1_bodyUnitLabelData').text)
+                    if unit and unit.find('span', class_='weather1_bodyUnitLabelData'): result_data[key] = safe_float(unit.find('span', class_='weather1_bodyUnitLabelData').text)
                 weather_unit = w_block.find('div', class_='is-weather')
                 if weather_unit: result_data['Weather'] = weather_unit.find('span', class_='weather1_bodyUnitLabelTitle').text.strip()
                 wind_dir_p = w_block.find('p', class_='weather1_bodyUnitImage')
@@ -229,6 +222,7 @@ def parse_single_race(task_tuple):
                     for c in wind_dir_p.get('class'):
                         if 'is-direction' in c: result_data['WindDirection'] = c.replace('is-direction', '')
         except: pass
+        
         tables = soup_result.find_all('table')
         for tbl in tables:
             headers = [th.get_text(strip=True) for th in tbl.find_all('th')]
@@ -241,6 +235,7 @@ def parse_single_race(task_tuple):
                         if b_txt.isdigit():
                             result_data[f"Result_Boat{b_txt}_Rank"] = clean_rank_value(cells[0].get_text(strip=True))
                             result_data[f"Result_Boat{b_txt}_Time"] = cells[3].get_text(strip=True).replace("\u3000", "").strip()
+                            
         for st_div in soup_result.find_all('div', class_=re.compile('table1_boatImage1')):
             num_span = st_div.find('span', class_=re.compile('table1_boatImage1Number'))
             if num_span:
@@ -250,7 +245,7 @@ def parse_single_race(task_tuple):
                     match = re.search(r'(F?\.?\d+)', time_span.get_text(strip=True))
                     result_data[f"Result_Boat{b_num}_ST"] = match.group(1) if match else time_span.get_text(strip=True)
                     
-    additional_data = extract_additional_data(soup_list, date_str)
+    additional_data = extract_additional_data(soup_list)
     
     row = {'Date': date_str, 'PlaceID': jcd_str, 'PlaceName': JCD_MAP.get(jcd_str, ""), 'RaceNum': str(r), 'RaceName': race_name, 'RaceInfo_URL': url_list, 'RaceResult_URL': url_result, 'Project_ID': project_id, 'Race_Type': race_type}
     row.update(result_data)
@@ -260,19 +255,20 @@ def parse_single_race(task_tuple):
     return row
 
 # =============================================================================
-# Google Drive API 操作関数（堅牢なアトミック更新版）
+# 4. Google Drive API 操作関数（堅牢なアトミック更新版）
 # =============================================================================
 def get_drive_service():
-    scopes = ['https://www.googleapis.com/auth/drive']
-    creds = service_account.Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
+    # 💡 修正3: 環境変数からJSONを読み込む方式に統一
+    if not GCP_SA_CREDENTIALS: return None
+    creds_dict = json.loads(GCP_SA_CREDENTIALS)
+    creds = service_account.Credentials.from_service_account_info(creds_dict)
     return build('drive', 'v3', credentials=creds)
 
 def get_master_file_id(service, folder_id, file_name):
     query = f"'{folder_id}' in parents and name='{file_name}' and trashed=false"
     results = service.files().list(q=query, fields="files(id, name)").execute()
     items = results.get('files', [])
-    if items:
-        return items[0]['id']
+    if items: return items[0]['id']
     return None
 
 def download_csv(service, file_id):
@@ -286,15 +282,8 @@ def download_csv(service, file_id):
     return pd.read_csv(fh, dtype=str)
 
 def safe_upload_csv(service, df, folder_id, final_file_name, old_file_id):
-    """
-    論理的な欠陥を排除した真のアトミック更新。
-    ① ダミーをアップロード
-    ② 古い正式ファイルを backup_xxx にリネーム（退避）
-    ③ ダミーを正式ファイル名にリネーム
-    ④ backup_xxx を削除
-    """
     local_tmp = 'temp_upload.csv'
-    df.to_csv(local_tmp, index=False, encoding='utf-8')
+    df.to_csv(local_tmp, index=False, encoding='utf-8-sig') # 💡 utf-8-sigで文字化け防止
     
     temp_name = f"temp_{final_file_name}"
     file_metadata = {'name': temp_name, 'parents': [folder_id]}
@@ -332,7 +321,10 @@ def main():
         return
         
     service = get_drive_service()
-    
+    if not service:
+        logger.error("GCP認証に失敗しました。")
+        return
+        
     logger.info(f"フォルダから '{FILE_NAME}' を探しています...")
     old_file_id = get_master_file_id(service, TARGET_FOLDER_ID, FILE_NAME)
     
@@ -353,6 +345,7 @@ def main():
 
     jst = pytz.timezone('Asia/Tokyo')
     now_jst = datetime.now(jst)
+    # 昨日までのデータを取得
     end_date = (now_jst - timedelta(days=1)).replace(tzinfo=None)
 
     if start_date > end_date:
@@ -380,16 +373,13 @@ def main():
                 res = f.result()
                 if res: new_results.append(res)
             except Exception as e:
-                # 【修正点4】エラーが起きた場合に握りつぶさずログに残す
                 logger.error(f"タスク処理中にエラーが発生しました: {e}")
 
     if new_results:
         logger.info(f"計 {len(new_results)} 件の新規データを取得しました。結合処理を行います...")
-        
-        # 【修正点1】型推論によるゼロ落ちを防ぐため dtype=str を明記
         new_df = pd.DataFrame(new_results, dtype=str)
         
-        # カラム順を既存マスターに揃える
+        # カラム順を既存マスターに揃える（欠損カラムは空文字で埋める）
         for col in df.columns:
             if col not in new_df.columns: new_df[col] = ""
         new_df = new_df[df.columns]
@@ -399,7 +389,7 @@ def main():
         # アトミックアップロード
         safe_upload_csv(service, df, TARGET_FOLDER_ID, FILE_NAME, old_file_id)
     else:
-        logger.info("新規データは見つかりませんでした。")
+        logger.info("新規データは見つかりませんでした（中止など）。")
 
 if __name__ == "__main__":
     main()
