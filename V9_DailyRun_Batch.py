@@ -173,11 +173,15 @@ def build_latest_hardware_dict():
     
     df_hw = df_hw.sort_values(by=['PlaceID', 'Motor_No', 'Date_Parsed'])
     df_hw['M_Time_Gap'] = df_hw.groupby(['PlaceID', 'Motor_No'])['Date_Parsed'].diff().dt.days
-    df_hw['Motor_Generation_ID'] = df_hw.groupby(['PlaceID', 'Motor_No'])['M_Time_Gap'].apply(lambda x: (x > 60).cumsum())
+    # 💡 apply()を使わず、boolean系列のcumsumで直接計算し、インデックスエラーを回避
+    df_hw['is_M_reset'] = df_hw['M_Time_Gap'] > 60
+    df_hw['Motor_Generation_ID'] = df_hw.groupby(['PlaceID', 'Motor_No'])['is_M_reset'].cumsum()
     
     df_hw = df_hw.sort_values(by=['PlaceID', 'Boat_No', 'Date_Parsed'])
     df_hw['B_Time_Gap'] = df_hw.groupby(['PlaceID', 'Boat_No'])['Date_Parsed'].diff().dt.days
-    df_hw['Boat_Generation_ID'] = df_hw.groupby(['PlaceID', 'Boat_No'])['B_Time_Gap'].apply(lambda x: (x > 60).cumsum())
+    # 💡 ボートも同様に修正
+    df_hw['is_B_reset'] = df_hw['B_Time_Gap'] > 60
+    df_hw['Boat_Generation_ID'] = df_hw.groupby(['PlaceID', 'Boat_No'])['is_B_reset'].cumsum()
 
     df_hw = df_hw.sort_values(by='Date_Parsed').reset_index(drop=True)
     grp_m = df_hw.groupby(['PlaceID', 'Motor_No', 'Motor_Generation_ID'])
