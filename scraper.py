@@ -282,18 +282,42 @@ def download_csv(service, file_id):
     return pd.read_csv(fh, dtype=str)
 
 def safe_upload_csv(service, df, folder_id, final_file_name, old_file_id):
+    """
+    論理的な欠陥を排除した真のアトミック更新 ＋ 通信切断に強いレジュームアップロード
+    """
     local_tmp = 'temp_upload.csv'
-    df.to_csv(local_tmp, index=False, encoding='utf-8-sig') # 💡 utf-8-sigで文字化け防止
+    df.to_csv(local_tmp, index=False, encoding='utf-8')
     
     temp_name = f"temp_{final_file_name}"
     file_metadata = {'name': temp_name, 'parents': [folder_id]}
-    media = MediaFileUpload(local_tmp, mimetype='text/csv', resumable=True)
     
-    logger.info(f"新データ（{temp_name}）をアップロード中...")
-    uploaded_file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-    new_file_id = uploaded_file.get('id')
-    logger.info("アップロード完了！安全なすり替え処理を実行します...")
+    # 【修正点】5MBずつ細かく分割してアップロードし、レジューム（再開）を有効にする
+    media = MediaFileUpload(local_tmp, mimetype='text/csv', resumable=True, chunksize=5*1024*1024)
     
+    logger.info(f"新データ（{temp_name}）を分割アップロード中...")
+    request = service.files().create(body=file_metadata, media_body=media, fields='id')
+    
+    response = None
+    retries = 0
+    # 100%完了するまでループで少しずつ送信（エラー時は自動再開）
+    while response is None:
+        try:
+            status, response = request.next_chunk()
+            if status:
+                logger.info(f"アップロード進捗: {int(status.progress() * 100)}%")
+            retries = 0  # 成功したらリトライカウントをリセット
+        except Exception as e:
+            logger.warning(f"通信エラー発生。レジューム（再開）を試みます...: {e}")
+            retries += 1
+            if retries > 5:
+                logger.error("アップロードの再試行上限に達しました。処理を中断します。")
+                raise e
+            time.sleep(2 ** retries) # 2秒, 4秒, 8秒...と待機時間を増やして再試行
+
+    new_file_id = response.get('id')
+    logger.info("ダミーファイルのアップロードが100%完了しました！")
+    
+    # 完全にアップロードできた場合のみ、以下のすり替え処理を実行
     if old_file_id:
         backup_name = f"backup_{final_file_name}"
         logger.info(f"既存のファイルを退避中 ({backup_name})...")
