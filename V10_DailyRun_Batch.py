@@ -426,15 +426,12 @@ def run_v10_inference_and_notify(df_s1, df_s2):
         except:
             return 0, 0
             
-    # 2連単の黄金条件抽出
     df_port_2t[['Plus', 'Active']] = pd.DataFrame(df_port_2t['OOS_プラス年数(24~26年)'].apply(parse_plus_yrs).tolist(), index=df_port_2t.index)
     df_port_2t = df_port_2t[(df_port_2t['OOS(未知)_統合レース数'] >= 15) & (df_port_2t['OOS(未知)_統合ROI'] >= 105) & (df_port_2t['Active'] >= 2) & (df_port_2t['Plus'] >= 2)]
     
-    # 2連複の黄金条件抽出
     df_port_2f[['Plus', 'Active']] = pd.DataFrame(df_port_2f['OOS_2連複_プラス年数(24~26年)'].apply(parse_plus_yrs).tolist(), index=df_port_2f.index)
     df_port_2f = df_port_2f[(df_port_2f['OOS(未知)_統合レース数'] >= 15) & (df_port_2f['OOS(未知)_統合2連複_ROI'] >= 105) & (df_port_2f['Active'] >= 2) & (df_port_2f['Plus'] >= 2)]
     
-    # 検索高速化のための辞書作成 (抽出後のデータで作成)
     valid_conditions_2t = set(zip(df_port_2t['Month'], df_port_2t['Project_ID'], df_port_2t['場名'], df_port_2t['Rough_Category']))
     valid_conditions_2f = set(zip(df_port_2f['Month'], df_port_2f['Project_ID'], df_port_2f['場名'], df_port_2f['Rough_Category']))
     
@@ -442,7 +439,7 @@ def run_v10_inference_and_notify(df_s1, df_s2):
     buys_2f = []
     debug_logs = {}
 
-    # 💡【追加】カプセル化されたモデルから特徴量名を安全に取得するヘルパー関数
+    # 💡【重要修正】カプセル化されたモデルから特徴量名を安全に取得する関数
     def get_feature_names(mdl):
         if hasattr(mdl, 'feature_name') and callable(mdl.feature_name): return mdl.feature_name()
         if hasattr(mdl, 'feature_name_'): return mdl.feature_name_
@@ -463,9 +460,10 @@ def run_v10_inference_and_notify(df_s1, df_s2):
             if not os.path.exists(m1_path): continue
             with open(m1_path, 'rb') as f: stage1_model = pickle.load(f)
             
-            # 💡【修正】直接呼び出さず、追加した関数を通す
+            # 💡 直接呼び出さずに関数を通す
             features_s1 = get_feature_names(stage1_model)
             X1 = ds1[features_s1].copy()
+            
             for col in X1.columns: X1[col] = pd.to_numeric(X1[col], errors='coerce').fillna(0.0)
             
             for c, cats in CATEGORIES_DEF_S1.items():
@@ -487,8 +485,10 @@ def run_v10_inference_and_notify(df_s1, df_s2):
             with open(m2_2nd_path, 'rb') as f: model2_2nd = pickle.load(f)
             
             # --- ⚡ Model 1 (1着予測) ---
-            features_m1 = model1_1st.feature_name()
+            # 💡 直接呼び出さずに関数を通す
+            features_m1 = get_feature_names(model1_1st)
             X2_m1 = ds2[features_m1].copy()
+            
             for col in X2_m1.columns:
                 if col not in CATEGORIES_DEF_S2:
                     X2_m1[col] = pd.to_numeric(X2_m1[col], errors='coerce').fillna(0.0)
@@ -508,8 +508,10 @@ def run_v10_inference_and_notify(df_s1, df_s2):
             df_m2_all['Win_Boat_Cat'] = pd.Categorical(df_m2_all['Win_Boat'], categories=[1,2,3,4,5,6], ordered=False)
             df_m2_all['Win_Boat'] = df_m2_all['Win_Boat_Cat'] 
             
-            features_m2 = model2_2nd.feature_name()
+            # 💡 直接呼び出さずに関数を通す
+            features_m2 = get_feature_names(model2_2nd)
             X2_m2 = df_m2_all[features_m2].copy()
+            
             for col in X2_m2.columns:
                 if col not in CATEGORIES_DEF_S2 and col != 'Win_Boat':
                     X2_m2[col] = pd.to_numeric(X2_m2[col], errors='coerce').fillna(0.0)
@@ -529,7 +531,6 @@ def run_v10_inference_and_notify(df_s1, df_s2):
             df_prob['P_2tan'] = df_prob['P1_Win_Norm'] * df_prob['P2_Norm']
             best_2tan_df = df_prob.sort_values(['Race_ID', 'P_2tan'], ascending=[True, False]).drop_duplicates('Race_ID')
             
-            # 【復活】2連複の合成
             df_prob['B1_fuku'] = df_prob[['Win_Boat', 'Boat_Number']].min(axis=1)
             df_prob['B2_fuku'] = df_prob[['Win_Boat', 'Boat_Number']].max(axis=1)
             df_fuku = df_prob.groupby(['Race_ID', 'B1_fuku', 'B2_fuku'])['P_2tan'].sum().reset_index(name='P_2fuku')
@@ -546,7 +547,6 @@ def run_v10_inference_and_notify(df_s1, df_s2):
                 rnum = int(rid.split('_')[2])
                 sched_time = r_info['Scheduled_Time']
                 
-                # 2連単・2連複それぞれの合致確認
                 is_hit_2t = (current_month, pid, place_name, cat) in valid_conditions_2t
                 is_hit_2f = (current_month, pid, place_name, cat) in valid_conditions_2f
                 is_hit = is_hit_2t or is_hit_2f
@@ -573,7 +573,8 @@ def run_v10_inference_and_notify(df_s1, df_s2):
                         buys_2f.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': t_2f, 'prob': b_2f['P_2fuku']})
                     
         except Exception as e: 
-            logger.error(f"AI Error ({pid}): {e}")
+            # 💡【重要追加】tracebackを出力してエラーの発生源をあぶり出す
+            logger.error(f"AI Error ({pid}): {e}\n{traceback.format_exc()}")
 
     # 📊 判定プロセスの詳細コンソール出力
     logger.info("📊 === V10 AI推論 1レースごとの判定レポート ===")
