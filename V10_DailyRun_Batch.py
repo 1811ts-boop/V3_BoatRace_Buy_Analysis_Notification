@@ -19,6 +19,7 @@ import io
 import logging
 import gc
 import warnings
+import traceback # 💡これを追加（エラーの行番号を追跡するツールです）
 warnings.filterwarnings("ignore")
 
 # =============================================================================
@@ -99,8 +100,9 @@ def send_line_broadcast(msg):
     try:
         resp = requests.post(url, headers=headers, json={"messages": [{"type": "text", "text": msg}]})
         if resp.status_code != 200: logger.error(f"❌ LINE API Error: {resp.text}")
-    except Exception as e:
-        logger.error(f"❌ LINEリクエスト送信エラー: {e}")
+    except Exception as e: 
+            # 💡エラーの発生源（何行目か、どの関数か）を全て出力させる
+            logger.error(f"AI Error ({pid}): {e}\n{traceback.format_exc()}")
 
 WEATHER_CACHE = {}
 def fetch_weather(place_id, target_time_str):
