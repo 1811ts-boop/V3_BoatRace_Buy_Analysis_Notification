@@ -445,12 +445,20 @@ def run_v9_inference_and_notify(df_s1, df_s2):
             return int(p[0]), int(p[1]) if len(p)==2 else 0
         except: return 0, 0
 
-    # 🎯 2連単のフィルタリングとパース
-    df_port_2t[['Plus', 'Active']] = pd.DataFrame(df_port_2t['OOS_プラス年数(24~26年)'].apply(parse_plus_yrs).tolist(), index=df_port_2t.index)
+    # 🎯 2連単のフィルタリングとパース（V10式：動的カラム取得）
+    plus_col_2t = [col for col in df_port_2t.columns if 'プラス年数' in col]
+    if not plus_col_2t:
+        logger.error("❌ 2連単ポートフォリオに『プラス年数』を含む列が見つかりません。")
+        return
+    df_port_2t[['Plus', 'Active']] = pd.DataFrame(df_port_2t[plus_col_2t[0]].apply(parse_plus_yrs).tolist(), index=df_port_2t.index)
     df_port_2t = df_port_2t[(df_port_2t['OOS(未知)_統合レース数'] >= 15) & (df_port_2t['OOS(未知)_統合ROI'] >= 105) & (df_port_2t['Active'] >= 2) & (df_port_2t['Plus'] >= 2)]
 
-    # 🛡️ 2連複のフィルタリングとパース（※列名が2連複専用）
-    df_port_2f[['Plus', 'Active']] = pd.DataFrame(df_port_2f['OOS_2連複_プラス年数(24~26年)'].apply(parse_plus_yrs).tolist(), index=df_port_2f.index)
+    # 🛡️ 2連複のフィルタリングとパース（V10式：動的カラム取得）
+    plus_col_2f = [col for col in df_port_2f.columns if 'プラス年数' in col]
+    if not plus_col_2f:
+        logger.error("❌ 2連複ポートフォリオに『プラス年数』を含む列が見つかりません。")
+        return
+    df_port_2f[['Plus', 'Active']] = pd.DataFrame(df_port_2f[plus_col_2f[0]].apply(parse_plus_yrs).tolist(), index=df_port_2f.index)
     df_port_2f = df_port_2f[(df_port_2f['OOS(未知)_統合レース数'] >= 15) & (df_port_2f['OOS(未知)_統合2連複_ROI'] >= 105) & (df_port_2f['Active'] >= 2) & (df_port_2f['Plus'] >= 2)]
 
     # --- 2. 💰 資金プッシュ度（ケリー基準ベース）の自動判定ロジック ---
