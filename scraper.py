@@ -281,21 +281,20 @@ def download_csv(service, file_id):
     fh.seek(0)
     return pd.read_csv(fh, dtype=str)
 
-def safe_upload_csv(service, df, folder_id, final_file_name, old_file_id):
+def resumable_update_csv(service, df, file_id):
     """
-    論理的な欠陥を排除した真のアトミック更新 ＋ 通信切断に強いレジュームアップロード
+    サービスアカウントの容量エラーを回避するため、既存ファイルへの上書き更新を行います。
+    分割レジューム（再開）機能を有効にしているため、通信切断時も安全に再試行されます。
     """
     local_tmp = 'temp_upload.csv'
     df.to_csv(local_tmp, index=False, encoding='utf-8')
     
-    temp_name = f"temp_{final_file_name}"
-    file_metadata = {'name': temp_name, 'parents': [folder_id]}
-    
-    # 【修正点】5MBずつ細かく分割してアップロードし、レジューム（再開）を有効にする
+    # 5MBずつ細かく分割してアップロード
     media = MediaFileUpload(local_tmp, mimetype='text/csv', resumable=True, chunksize=5*1024*1024)
     
-    logger.info(f"新データ（{temp_name}）を分割アップロード中...")
-    request = service.files().create(body=file_metadata, media_body=media, fields='id')
+    logger.info("マスターデータを上書き更新（分割アップロード）しています...")
+    # create(新規作成) ではなく update(上書き) を使用
+    request = service.files().update(fileId=file_id, media_body=media)
     
     response = None
     retries = 0
@@ -312,29 +311,10 @@ def safe_upload_csv(service, df, folder_id, final_file_name, old_file_id):
             if retries > 5:
                 logger.error("アップロードの再試行上限に達しました。処理を中断します。")
                 raise e
-            time.sleep(2 ** retries) # 2秒, 4秒, 8秒...と待機時間を増やして再試行
-
-    new_file_id = response.get('id')
-    logger.info("ダミーファイルのアップロードが100%完了しました！")
-    
-    # 完全にアップロードできた場合のみ、以下のすり替え処理を実行
-    if old_file_id:
-        backup_name = f"backup_{final_file_name}"
-        logger.info(f"既存のファイルを退避中 ({backup_name})...")
-        service.files().update(fileId=old_file_id, body={'name': backup_name}).execute()
+            time.sleep(2 ** retries)
             
-    logger.info(f"新ファイル名を正式名称（{final_file_name}）に変更中...")
-    service.files().update(fileId=new_file_id, body={'name': final_file_name}).execute()
-    
-    if old_file_id:
-        try:
-            logger.info("退避した古いマスターファイルを削除しています...")
-            service.files().delete(fileId=old_file_id).execute()
-        except Exception as e:
-            logger.warning(f"古いファイルの削除に失敗しましたが、更新自体は成功しています: {e}")
-            
+    logger.info("Google Driveのマスターデータ更新が100%完了しました！")
     os.remove(local_tmp)
-    logger.info("完全なアトミック更新が完了しました！")
 
 # =============================================================================
 # メイン処理
@@ -410,10 +390,10 @@ def main():
         
         df = pd.concat([df, new_df], ignore_index=True)
         
-        # アトミックアップロード
-        safe_upload_csv(service, df, TARGET_FOLDER_ID, FILE_NAME, old_file_id)
+        # レジューム機能付き上書きアップロード
+        resumable_update_csv(service, df, old_file_id)
     else:
-        logger.info("新規データは見つかりませんでした（中止など）。")
+        logger.info("新規データは見つかりませんでした。")
 
 if __name__ == "__main__":
     main()
