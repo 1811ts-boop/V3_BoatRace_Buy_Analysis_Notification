@@ -437,14 +437,44 @@ def run_v9_inference_and_notify(df_s1, df_s2):
         
     df_port_2t = pd.read_csv(PORTFOLIO_2TAN)
     df_port_2f = pd.read_csv(PORTFOLIO_2FUKU)
-    
-    # 検索高速化のための辞書作成 (Month, Project_ID, 場名, Rough_Category) -> True
-    dict_2t = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): True for _, row in df_port_2t.iterrows()}
-    dict_2f = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): True for _, row in df_port_2f.iterrows()}
+
+    # --- 1. ポートフォリオのプラス年数解析 ---
+    def parse_plus_yrs(val):
+        try:
+            p = str(val).split('/')
+            return int(p[0]), int(p[1]) if len(p)==2 else 0
+        except: return 0, 0
+
+    # 🎯 2連単のフィルタリングとパース
+    df_port_2t[['Plus', 'Active']] = pd.DataFrame(df_port_2t['OOS_プラス年数(24~26年)'].apply(parse_plus_yrs).tolist(), index=df_port_2t.index)
+    df_port_2t = df_port_2t[(df_port_2t['OOS(未知)_統合レース数'] >= 15) & (df_port_2t['OOS(未知)_統合ROI'] >= 105) & (df_port_2t['Active'] >= 2) & (df_port_2t['Plus'] >= 2)]
+
+    # 🛡️ 2連複のフィルタリングとパース（※列名が2連複専用）
+    df_port_2f[['Plus', 'Active']] = pd.DataFrame(df_port_2f['OOS_2連複_プラス年数(24~26年)'].apply(parse_plus_yrs).tolist(), index=df_port_2f.index)
+    df_port_2f = df_port_2f[(df_port_2f['OOS(未知)_統合レース数'] >= 15) & (df_port_2f['OOS(未知)_統合2連複_ROI'] >= 105) & (df_port_2f['Active'] >= 2) & (df_port_2f['Plus'] >= 2)]
+
+    # --- 2. 💰 資金プッシュ度（ケリー基準ベース）の自動判定ロジック ---
+    def get_bet_multiplier(races, roi, active, plus):
+        if active == 0 or pd.isna(races) or pd.isna(roi): return 0
+        # 🔥 Sランク：5倍（絶対的エース：サンプル多 or 超高回収 ＆ 全年プラス）
+        if ((races >= 40 and roi >= 115) or (races >= 25 and roi >= 135)) and (plus == active): return 5
+        # 💰 Aランク：3倍（主軸：高回収 ＆ 1年の下振れまで許容）
+        if ((races >= 20 and roi >= 115) or (races >= 15 and roi >= 130)) and (plus >= active - 1): return 3
+        # 🪙 Bランク：1倍（ポートフォリオの基礎条件をクリアしたその他すべて）
+        return 1
+
+    # 🎯 2連単の倍率算出
+    df_port_2t['Bet_Multi'] = df_port_2t.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合ROI'], x['Active'], x['Plus']), axis=1)
+    # 🛡️ 2連複の倍率算出
+    df_port_2f['Bet_Multi'] = df_port_2f.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合2連複_ROI'], x['Active'], x['Plus']), axis=1)
+
+    # 検索高速化のための辞書作成 (Month, Project_ID, 場名, Rough_Category) -> 倍率(Bet_Multi)
+    valid_conditions_2t = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): row['Bet_Multi'] for _, row in df_port_2t.iterrows()}
+    valid_conditions_2f = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): row['Bet_Multi'] for _, row in df_port_2f.iterrows()}
     
     buys_2t = []
     buys_2f = []
-    debug_logs = {} # 📊 V7継承: デバッグログ格納用
+    debug_logs = {}
 
     for pid in PROJECT_IDS:
         ds1 = df_s1[df_s1['Project_ID'] == pid].copy()
@@ -456,7 +486,6 @@ def run_v9_inference_and_notify(df_s1, df_s2):
             with open(m1_path, 'rb') as f: m1 = pickle.load(f)
             
             X1 = ds1[m1.feature_name()].copy()
-            # 🛡️ 安全対策：欠損値を埋めて確実にfloat型に変換
             for col in X1.columns: X1[col] = pd.to_numeric(X1[col], errors='coerce').fillna(0.0)
             
             for c, cats in CATEGORIES_DEF_S1.items():
@@ -469,7 +498,6 @@ def run_v9_inference_and_notify(df_s1, df_s2):
             with open(m2_path, 'rb') as f: m2 = pickle.load(f)
             
             X2 = ds2[m2.feature_name()].copy()
-            # 🛡️ 安全対策：欠損値を埋めて確実にfloat型に変換
             for col in X2.columns: X2[col] = pd.to_numeric(X2[col], errors='coerce').fillna(0.0)
             
             for c, cats in CATEGORIES_DEF_S2.items():
@@ -486,13 +514,14 @@ def run_v9_inference_and_notify(df_s1, df_s2):
                 rnum = int(rid.split('_')[2])
                 sched_time = grp['Scheduled_Time'].iloc[0]
                 
-                hit_2t = dict_2t.get((current_month, pid, place_name, cat), False)
-                hit_2f = dict_2f.get((current_month, pid, place_name, cat), False)
+                # 倍率を取得（0なら不適合）
+                multi_2t = valid_conditions_2t.get((current_month, pid, place_name, cat), 0)
+                multi_2f = valid_conditions_2f.get((current_month, pid, place_name, cat), 0)
                 
-                is_hit = hit_2t or hit_2f
+                is_hit = (multi_2t > 0) or (multi_2f > 0)
                 reason = []
-                if hit_2t: reason.append("2連単")
-                if hit_2f: reason.append("2連複")
+                if multi_2t > 0: reason.append(f"2単({multi_2t}倍)")
+                if multi_2f > 0: reason.append(f"2複({multi_2f}倍)")
                 reason_str = f"✅ 合致: {','.join(reason)}" if is_hit else "❌ 当場・当条件の勝負指定なし"
                 
                 if plid not in debug_logs: debug_logs[plid] = []
@@ -503,18 +532,22 @@ def run_v9_inference_and_notify(df_s1, df_s2):
                     p_2tan, p_2fuku = calculate_probabilities(scores)
                     grade = "SG" if pid == "P0_SG" else "G1" if pid == "P1_G1_Elite" else "女子" if pid == "P2_Ladies" else "一般" if pid == "P3_General_Std" else "企画"
                     
-                    if hit_2t:
+                    # 🎯 2連単の買い目抽出
+                    if multi_2t > 0:
                         best_2tan = sorted(p_2tan.items(), key=lambda x: x[1], reverse=True)[0]
-                        buys_2t.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': best_2tan[0], 'prob': best_2tan[1]})
+                        m_icon = "🔥5倍" if multi_2t == 5 else "💰3倍" if multi_2t == 3 else "🪙1倍"
+                        buys_2t.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': best_2tan[0], 'prob': best_2tan[1], 'multi': multi_2t, 'm_icon': m_icon})
                     
-                    if hit_2f:
+                    # 🛡️ 2連複の買い目抽出
+                    if multi_2f > 0:
                         best_2fuku = sorted(p_2fuku.items(), key=lambda x: x[1], reverse=True)[0]
-                        buys_2f.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': best_2fuku[0], 'prob': best_2fuku[1]})
+                        m_icon = "🔥5倍" if multi_2f == 5 else "💰3倍" if multi_2f == 3 else "🪙1倍"
+                        buys_2f.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': best_2fuku[0], 'prob': best_2fuku[1], 'multi': multi_2f, 'm_icon': m_icon})
                         
         except Exception as e: 
             logger.error(f"AI Error ({pid}): {e}")
 
-    # 📊 判定プロセスの詳細コンソール出力 (V7継承)
+    # 📊 判定プロセスの詳細コンソール出力
     logger.info("📊 === V9 AI推論 1レースごとの判定レポート ===")
     for plid in sorted(debug_logs.keys()):
         place_name = JCD_MAP.get(f"{plid:02d}", "不明")
@@ -531,14 +564,14 @@ def run_v9_inference_and_notify(df_s1, df_s2):
     logger.info("======================================")
 
     # LINE通知の組み立て
-    msg = f"🤖 V9 LambdaRank AI\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n"
+    msg = f"🤖 V9 LambdaRank AI (Kelly Edition)\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n"
     
     if not buys_2t and not buys_2f:
         msg += "\n本日は勝負条件に合致するレースがありません。\n資金を温存します。"
         send_line_broadcast(msg)
         return
 
-    # 💡 2連単と2連複のリストを統合し、種類（アイコン）を追加
+    # 2連単と2連複のリストを統合し、種類を追加
     buys_all = []
     for b in buys_2t:
         b['type'] = '🎯2連単'
@@ -547,19 +580,26 @@ def run_v9_inference_and_notify(df_s1, df_s2):
         b['type'] = '🛡️2連複'
         buys_all.append(b)
 
-    # 💡 ソート順を「場ID (p) → レース番号 (r) → 券種」に変更
-    buys_all = sorted(buys_all, key=lambda x: (x['p'], x['r'], x['type']))
+    # 💡 ソート順：倍率が高い順（5倍→3倍→1倍）→ 会場 → レース番号 → 券種
+    buys_all = sorted(buys_all, key=lambda x: (-x['multi'], x['p'], x['r'], x['type']))
 
-    msg += f"\n■ 本日の勝負レース (計{len(buys_all)}件)\n"
+    msg += f"\n■ 本日の厳選勝負レース (計{len(buys_all)}件)\n"
     
-    # 💡 同じレースの場合はヘッダーを省略してスッキリ見せる工夫
+    prev_multi = -1
     prev_race_key = ""
+    
     for b in buys_all:
+        # 倍率が変わったタイミングで見出し（ゾーン）を挿入
+        if b['multi'] != prev_multi:
+            msg += f"\n▼ {b['m_icon']}勝負ゾーン ▼\n"
+            prev_multi = b['multi']
+            prev_race_key = "" # ゾーンが変わったらレース見出しも出すためリセット
+            
         current_race_key = f"{b['p']}_{b['r']}"
         
         # 新しいレースの時だけ見出しを出す
         if current_race_key != prev_race_key:
-            msg += f"\n[{b['time']}] {b['place']} {b['r']}R\n"
+            msg += f"[{b['time']}] {b['place']} {b['r']}R\n"
             msg += f" ├ {b['grade']} / {b['cat']}\n"
             prev_race_key = current_race_key
             
