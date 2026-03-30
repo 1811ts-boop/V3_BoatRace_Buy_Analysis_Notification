@@ -404,7 +404,7 @@ def transform_for_v9_inference(df_raw, df_tide, dict_motor, dict_boat):
     return pd.DataFrame(fs1), pd.DataFrame(fs2)
 
 # =============================================================================
-# 6. V10 ハイブリッド推論 ＆ LINE通知
+# 6. V10 ハイブリッド推論 ＆ LINE通知 (最適化＆全ログ出力版)
 # =============================================================================
 def get_rough_cat(p): return "超堅め(0-20%)" if p < 0.2 else "やや堅め(20-40%)" if p < 0.4 else "普通(40-60%)" if p < 0.6 else "やや荒れ(60-80%)" if p < 0.8 else "大荒れ(80-100%)"
 
@@ -418,7 +418,6 @@ def run_v10_inference_and_notify(df_s1, df_s2):
     df_port_2t = pd.read_csv(PORTFOLIO_2TAN_CSV)
     df_port_2f = pd.read_csv(PORTFOLIO_2FUKU_CSV)
     
-    # --- 💡 動的フィルタリング（黄金条件の自動抽出） ---
     def parse_plus_yrs(val):
         try:
             p = str(val).split('/')
@@ -439,7 +438,6 @@ def run_v10_inference_and_notify(df_s1, df_s2):
     buys_2f = []
     debug_logs = {}
 
-    # 💡【重要修正】カプセル化されたモデルから特徴量名を安全に取得する関数
     def get_feature_names(mdl):
         if hasattr(mdl, 'feature_name') and callable(mdl.feature_name): return mdl.feature_name()
         if hasattr(mdl, 'feature_name_'): return mdl.feature_name_
@@ -460,38 +458,70 @@ def run_v10_inference_and_notify(df_s1, df_s2):
             if not os.path.exists(m1_path): continue
             with open(m1_path, 'rb') as f: stage1_model = pickle.load(f)
             
-            # 💡 直接呼び出さずに関数を通す
             features_s1 = get_feature_names(stage1_model)
             X1 = ds1[features_s1].copy()
-            
             for col in X1.columns: X1[col] = pd.to_numeric(X1[col], errors='coerce').fillna(0.0)
             
             for c, cats in CATEGORIES_DEF_S1.items():
                 if c in X1.columns: X1[c] = pd.Categorical(X1[c].fillna(cats[0]).astype(int), categories=cats, ordered=False).codes
             ds1['Stage1_Rough_Prob'] = stage1_model.predict(X1.astype(float).values)
             
+            # 💡【大改修】ここで先にポートフォリオ照合とログ記録を済ませる
+            race_info_s1 = ds1[['Race_ID', 'PlaceID', 'Scheduled_Time', 'Stage1_Rough_Prob']].drop_duplicates('Race_ID')
+            
+            target_rids_2t = set()
+            target_rids_2f = set()
+            has_hit_in_pid = False
+            
+            for _, r_info in race_info_s1.iterrows():
+                rid = r_info['Race_ID']
+                plid = int(r_info['PlaceID'])
+                place_name = JCD_MAP.get(f"{plid:02d}", "不明")
+                cat = get_rough_cat(r_info['Stage1_Rough_Prob'])
+                rnum = int(rid.split('_')[2])
+                
+                is_hit_2t = (current_month, pid, place_name, cat) in valid_conditions_2t
+                is_hit_2f = (current_month, pid, place_name, cat) in valid_conditions_2f
+                is_hit = is_hit_2t or is_hit_2f
+                
+                reason = []
+                if is_hit_2t: 
+                    reason.append("2単")
+                    target_rids_2t.add(rid)
+                if is_hit_2f: 
+                    reason.append("2複")
+                    target_rids_2f.add(rid)
+                
+                if is_hit: has_hit_in_pid = True
+                reason_str = f"✅ 合致: {','.join(reason)}" if is_hit else "❌ 当場・当条件の勝負指定なし"
+                
+                if plid not in debug_logs: debug_logs[plid] = []
+                debug_logs[plid].append({'rnum': rnum, 'pid': pid, 'cat': cat, 'is_hit': is_hit, 'reason': reason_str})
+            
+            # 💡【超・最適化】合致レースが1つも無ければ、重いV10推論をスキップして爆速化
+            if not has_hit_in_pid:
+                continue
+                
             # --- ⚡ Stage 2 準備 (V10) ---
             ds2 = df_s2[df_s2['Project_ID'] == pid].merge(ds1[['Race_ID', 'Stage1_Rough_Prob']], on='Race_ID', how='inner')
-            
             for c, cats in CATEGORIES_DEF_S2.items():
-                if c in ds2.columns:
-                    ds2[c] = pd.Categorical(ds2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
+                if c in ds2.columns: ds2[c] = pd.Categorical(ds2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
 
             m1_1st_path = f"Models_Stage2_V10/LGBM_V10_Model1_1st_{pid}.pkl"
             m2_2nd_path = f"Models_Stage2_V10/LGBM_V10_Model2_2nd_{pid}.pkl"
-            if not (os.path.exists(m1_1st_path) and os.path.exists(m2_2nd_path)): continue
+            
+            if not (os.path.exists(m1_1st_path) and os.path.exists(m2_2nd_path)): 
+                logger.error(f"⚠️ {pid} の勝負レースがありますが、V10モデルが見つからないため推論をスキップします。")
+                continue
             
             with open(m1_1st_path, 'rb') as f: model1_1st = pickle.load(f)
             with open(m2_2nd_path, 'rb') as f: model2_2nd = pickle.load(f)
             
             # --- ⚡ Model 1 (1着予測) ---
-            # 💡 直接呼び出さずに関数を通す
             features_m1 = get_feature_names(model1_1st)
             X2_m1 = ds2[features_m1].copy()
-            
             for col in X2_m1.columns:
-                if col not in CATEGORIES_DEF_S2:
-                    X2_m1[col] = pd.to_numeric(X2_m1[col], errors='coerce').fillna(0.0)
+                if col not in CATEGORIES_DEF_S2: X2_m1[col] = pd.to_numeric(X2_m1[col], errors='coerce').fillna(0.0)
             
             ds2['P1_Raw'] = model1_1st.predict_proba(X2_m1)[:, 1]
             ds2['P1_Sum'] = ds2.groupby('Race_ID')['P1_Raw'].transform('sum')
@@ -508,13 +538,10 @@ def run_v10_inference_and_notify(df_s1, df_s2):
             df_m2_all['Win_Boat_Cat'] = pd.Categorical(df_m2_all['Win_Boat'], categories=[1,2,3,4,5,6], ordered=False)
             df_m2_all['Win_Boat'] = df_m2_all['Win_Boat_Cat'] 
             
-            # 💡 直接呼び出さずに関数を通す
             features_m2 = get_feature_names(model2_2nd)
             X2_m2 = df_m2_all[features_m2].copy()
-            
             for col in X2_m2.columns:
-                if col not in CATEGORIES_DEF_S2 and col != 'Win_Boat':
-                    X2_m2[col] = pd.to_numeric(X2_m2[col], errors='coerce').fillna(0.0)
+                if col not in CATEGORIES_DEF_S2 and col != 'Win_Boat': X2_m2[col] = pd.to_numeric(X2_m2[col], errors='coerce').fillna(0.0)
             
             df_m2_all['P2_Raw'] = model2_2nd.predict_proba(X2_m2)[:, 1]
             df_m2_all['Win_Boat'] = df_m2_all['Win_Boat'].astype(int) 
@@ -536,44 +563,24 @@ def run_v10_inference_and_notify(df_s1, df_s2):
             df_fuku = df_prob.groupby(['Race_ID', 'B1_fuku', 'B2_fuku'])['P_2tan'].sum().reset_index(name='P_2fuku')
             best_2fuku_df = df_fuku.sort_values(['Race_ID', 'P_2fuku'], ascending=[True, False]).drop_duplicates('Race_ID')
             
-            # --- 🎯 ポートフォリオ照合と買い目抽出 ---
-            race_info = ds2[['Race_ID', 'PlaceID', 'Scheduled_Time', 'Stage1_Rough_Prob']].drop_duplicates('Race_ID')
+            # --- 🎯 買い目抽出 (ログ出力は上で済ませているので抽出のみ) ---
+            grade = "SG" if pid == "P0_SG" else "G1" if pid == "P1_G1_Elite" else "女子" if pid == "P2_Ladies" else "一般" if pid == "P3_General_Std" else "企画"
             
-            for _, r_info in race_info.iterrows():
-                rid = r_info['Race_ID']
+            for rid in target_rids_2t:
+                if rid not in best_2tan_df['Race_ID'].values: continue
+                b_2t = best_2tan_df[best_2tan_df['Race_ID'] == rid].iloc[0]
+                r_info = race_info_s1[race_info_s1['Race_ID'] == rid].iloc[0]
                 plid = int(r_info['PlaceID'])
-                place_name = JCD_MAP.get(f"{plid:02d}", "不明")
-                cat = get_rough_cat(r_info['Stage1_Rough_Prob'])
-                rnum = int(rid.split('_')[2])
-                sched_time = r_info['Scheduled_Time']
+                buys_2t.append({'time': r_info['Scheduled_Time'], 'p': plid, 'place': JCD_MAP.get(f"{plid:02d}", "不明"), 'r': int(rid.split('_')[2]), 'grade': grade, 'cat': get_rough_cat(r_info['Stage1_Rough_Prob']), 'ticket': f"{int(b_2t['Win_Boat'])}-{int(b_2t['Boat_Number'])}", 'prob': b_2t['P_2tan']})
                 
-                is_hit_2t = (current_month, pid, place_name, cat) in valid_conditions_2t
-                is_hit_2f = (current_month, pid, place_name, cat) in valid_conditions_2f
-                is_hit = is_hit_2t or is_hit_2f
-                
-                reason = []
-                if is_hit_2t: reason.append("2単")
-                if is_hit_2f: reason.append("2複")
-                reason_str = f"✅ 合致: {','.join(reason)}" if is_hit else "❌ 当場・当条件の勝負指定なし"
-                
-                if plid not in debug_logs: debug_logs[plid] = []
-                debug_logs[plid].append({'rnum': rnum, 'pid': pid, 'cat': cat, 'is_hit': is_hit, 'reason': reason_str})
-                
-                if is_hit:
-                    grade = "SG" if pid == "P0_SG" else "G1" if pid == "P1_G1_Elite" else "女子" if pid == "P2_Ladies" else "一般" if pid == "P3_General_Std" else "企画"
-                    
-                    if is_hit_2t:
-                        b_2t = best_2tan_df[best_2tan_df['Race_ID'] == rid].iloc[0]
-                        t_2t = f"{int(b_2t['Win_Boat'])}-{int(b_2t['Boat_Number'])}"
-                        buys_2t.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': t_2t, 'prob': b_2t['P_2tan']})
-                    
-                    if is_hit_2f:
-                        b_2f = best_2fuku_df[best_2fuku_df['Race_ID'] == rid].iloc[0]
-                        t_2f = f"{int(b_2f['B1_fuku'])}={int(b_2f['B2_fuku'])}"
-                        buys_2f.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': t_2f, 'prob': b_2f['P_2fuku']})
+            for rid in target_rids_2f:
+                if rid not in best_2fuku_df['Race_ID'].values: continue
+                b_2f = best_2fuku_df[best_2fuku_df['Race_ID'] == rid].iloc[0]
+                r_info = race_info_s1[race_info_s1['Race_ID'] == rid].iloc[0]
+                plid = int(r_info['PlaceID'])
+                buys_2f.append({'time': r_info['Scheduled_Time'], 'p': plid, 'place': JCD_MAP.get(f"{plid:02d}", "不明"), 'r': int(rid.split('_')[2]), 'grade': grade, 'cat': get_rough_cat(r_info['Stage1_Rough_Prob']), 'ticket': f"{int(b_2f['B1_fuku'])}={int(b_2f['B2_fuku'])}", 'prob': b_2f['P_2fuku']})
                     
         except Exception as e: 
-            # 💡【重要追加】tracebackを出力してエラーの発生源をあぶり出す
             logger.error(f"AI Error ({pid}): {e}\n{traceback.format_exc()}")
 
     # 📊 判定プロセスの詳細コンソール出力
