@@ -1,4 +1,4 @@
-name: V9 & V3 Daily BoatRace AI
+name: V10 & V9 & V3 Daily BoatRace AI
 
 on:
   schedule:
@@ -9,7 +9,7 @@ on:
 jobs:
   run-ai-models:
     runs-on: ubuntu-latest
-    timeout-minutes: 60 # 🛡️ 2モデル稼働のため、安全装置を60分に最適化
+    timeout-minutes: 90 # 🛡️ 3モデル稼働のため、安全装置を90分に延長
 
     steps:
       - name: Checkout repository
@@ -27,9 +27,22 @@ jobs:
           pip install -r requirements.txt
 
       # -----------------------------------------------
-      # 🚀 1つ目：V9システム（LambdaRank 最新ハイブリッド版）を実行
+      # 🚀 1つ目：V10システム（条件付き確率 最新版）を実行
+      # -----------------------------------------------
+      - name: Run V10 Daily Script
+        env:
+          TZ: 'Asia/Tokyo'
+          GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+        run: |
+          python V10_DailyRun_Batch.py
+
+      # -----------------------------------------------
+      # 🚀 2つ目：V9システム（LambdaRank ハイブリッド版）を実行
       # -----------------------------------------------
       - name: Run V9 Daily Script
+        if: always() # 🛡️ V10がコケても必ず実行
         env:
           TZ: 'Asia/Tokyo'
           GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
@@ -39,7 +52,7 @@ jobs:
           python V9_DailyRun_Batch.py
 
       # -----------------------------------------------
-      # 🚀 2つ目：従来のV3システムを実行
+      # 🚀 3つ目：従来のV3システムを実行
       # -----------------------------------------------
       - name: Run V3 Daily Script
         if: always() # 🛡️ V9がコケても必ず実行
