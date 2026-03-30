@@ -437,8 +437,8 @@ def run_v10_inference_and_notify(df_s1, df_s2):
         # Sランク：5倍（130%&30R or 150%&20R かつ 達成年数100%）
         if ((races >= 30 and roi >= 130) or (races >= 20 and roi >= 150)) and win_ratio == 1.0:
             return 5
-        # Aランク：3倍（115%&20R or 130%&15R かつ 達成年数80%以上）
-        if ((races >= 20 and roi >= 115) or (races >= 15 and roi >= 130)) and win_ratio >= 0.8:
+        # Aランク：3倍（115%&20R or 130%&15R かつ 達成年数60%以上）
+        if ((races >= 20 and roi >= 115) or (races >= 15 and roi >= 130)) and win_ratio >= 0.6:
             return 3
         # Bランク：1倍（上記以外の黄金条件）
         return 1
