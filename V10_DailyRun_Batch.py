@@ -40,7 +40,8 @@ OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 
 TIDE_CSV_NAME = "Tide_Master_2020_2026.csv"
 MASTER_CSV_NAME = "BoatRace_Master_Updated_with_2Tan_2Fuku.csv"
-PORTFOLIO_CSV = "V10_Portfolio_Golden.csv" # V10用の黄金条件リスト
+PORTFOLIO_2TAN_CSV = "V10_Portfolio_OOS_Detailed_2Tan_Results.csv"
+PORTFOLIO_2FUKU_CSV = "V10_Portfolio_OOS_Detailed_2Fuku_Results.csv"
 
 PROJECT_IDS = ['P0_SG', 'P1_G1_Elite', 'P2_Ladies', 'P3_General_Std', 'P4_Planning']
 MAX_WORKERS = 3  
@@ -82,8 +83,8 @@ def prepare_ai_models(service):
     
     download_latest_file_by_name(service, TIDE_CSV_NAME)
     logger.info("   - マスターデータ(500MB超)をダウンロード中...少々お待ちください")
-    download_latest_file_by_name(service, MASTER_CSV_NAME)
-    download_latest_file_by_name(service, PORTFOLIO_CSV)
+    download_latest_file_by_name(service, PORTFOLIO_2TAN_CSV)
+    download_latest_file_by_name(service, PORTFOLIO_2FUKU_CSV)
     
     for pid in PROJECT_IDS:
         download_latest_file_by_name(service, f"LGBM_Stage1_V9_{pid}.pkl", "Models_Stage1_V9")
@@ -400,21 +401,39 @@ def transform_for_v9_inference(df_raw, df_tide, dict_motor, dict_boat):
     return pd.DataFrame(fs1), pd.DataFrame(fs2)
 
 # =============================================================================
-# 6. V9 ハイブリッド推論 ＆ LINE通知
+# 6. V10 ハイブリッド推論 ＆ LINE通知
 # =============================================================================
 def get_rough_cat(p): return "超堅め(0-20%)" if p < 0.2 else "やや堅め(20-40%)" if p < 0.4 else "普通(40-60%)" if p < 0.6 else "やや荒れ(60-80%)" if p < 0.8 else "大荒れ(80-100%)"
 
 def run_v10_inference_and_notify(df_s1, df_s2):
     current_month = TODAY_OBJ.month
     
-    if not os.path.exists(PORTFOLIO_CSV):
+    if not os.path.exists(PORTFOLIO_2TAN_CSV) or not os.path.exists(PORTFOLIO_2FUKU_CSV):
         send_line_broadcast("❌ V10ポートフォリオファイルが読み込めませんでした。稼働を停止します。")
         return
         
-    df_port = pd.read_csv(PORTFOLIO_CSV)
+    df_port_2t = pd.read_csv(PORTFOLIO_2TAN_CSV)
+    df_port_2f = pd.read_csv(PORTFOLIO_2FUKU_CSV)
     
-    # 検索高速化のための辞書作成 (Month, Project_ID, 場名, Rough_Category)
-    valid_conditions = set(zip(df_port['Month'], df_port['Project_ID'], df_port['場名'], df_port['Rough_Category']))
+    # --- 💡 動的フィルタリング（黄金条件の自動抽出） ---
+    def parse_plus_yrs(val):
+        try:
+            p = str(val).split('/')
+            return int(p[0]), int(p[1]) if len(p)==2 else 0
+        except:
+            return 0, 0
+            
+    # 2連単の黄金条件抽出
+    df_port_2t[['Plus', 'Active']] = pd.DataFrame(df_port_2t['OOS_プラス年数(24~26年)'].apply(parse_plus_yrs).tolist(), index=df_port_2t.index)
+    df_port_2t = df_port_2t[(df_port_2t['OOS(未知)_統合レース数'] >= 15) & (df_port_2t['OOS(未知)_統合ROI'] >= 105) & (df_port_2t['Active'] >= 2) & (df_port_2t['Plus'] >= 2)]
+    
+    # 2連複の黄金条件抽出
+    df_port_2f[['Plus', 'Active']] = pd.DataFrame(df_port_2f['OOS_2連複_プラス年数(24~26年)'].apply(parse_plus_yrs).tolist(), index=df_port_2f.index)
+    df_port_2f = df_port_2f[(df_port_2f['OOS(未知)_統合レース数'] >= 15) & (df_port_2f['OOS(未知)_統合2連複_ROI'] >= 105) & (df_port_2f['Active'] >= 2) & (df_port_2f['Plus'] >= 2)]
+    
+    # 検索高速化のための辞書作成 (抽出後のデータで作成)
+    valid_conditions_2t = set(zip(df_port_2t['Month'], df_port_2t['Project_ID'], df_port_2t['場名'], df_port_2t['Rough_Category']))
+    valid_conditions_2f = set(zip(df_port_2f['Month'], df_port_2f['Project_ID'], df_port_2f['場名'], df_port_2f['Rough_Category']))
     
     buys_2t = []
     buys_2f = []
@@ -440,7 +459,6 @@ def run_v10_inference_and_notify(df_s1, df_s2):
             # --- ⚡ Stage 2 準備 (V10) ---
             ds2 = df_s2[df_s2['Project_ID'] == pid].merge(ds1[['Race_ID', 'Stage1_Rough_Prob']], on='Race_ID', how='inner')
             
-            # 【重要】カテゴリ変数をPandasのCategorical型に変換（.codesにしない）
             for c, cats in CATEGORIES_DEF_S2.items():
                 if c in ds2.columns:
                     ds2[c] = pd.Categorical(ds2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False)
@@ -482,17 +500,20 @@ def run_v10_inference_and_notify(df_s1, df_s2):
             
             df_m2_all['P2_Raw'] = model2_2nd.predict_proba(X2_m2)[:, 1]
             df_m2_all['Win_Boat'] = df_m2_all['Win_Boat'].astype(int) 
+            df_m2_all['Boat_Number'] = df_m2_all['Boat_Number'].astype(int)
             
             df_m2_all['P2_Sum'] = df_m2_all.groupby(['Race_ID', 'Win_Boat'])['P2_Raw'].transform('sum')
             df_m2_all['P2_Norm'] = np.where(df_m2_all['P2_Sum'] > 0, df_m2_all['P2_Raw'] / df_m2_all['P2_Sum'], 1.0 / 5.0)
 
-            # --- ⚡ 2連単・2連複の合成 ---
+            # --- ⚡ 2連単・2連複の確率合成 ---
             p1_subset = ds2[['Race_ID', 'Boat_Number', 'P1_Norm']].rename(columns={'Boat_Number': 'Win_Boat', 'P1_Norm': 'P1_Win_Norm'})
+            p1_subset['Win_Boat'] = p1_subset['Win_Boat'].astype(int)
+            
             df_prob = df_m2_all.merge(p1_subset, on=['Race_ID', 'Win_Boat'], how='left')
             df_prob['P_2tan'] = df_prob['P1_Win_Norm'] * df_prob['P2_Norm']
-            
             best_2tan_df = df_prob.sort_values(['Race_ID', 'P_2tan'], ascending=[True, False]).drop_duplicates('Race_ID')
             
+            # 【復活】2連複の合成
             df_prob['B1_fuku'] = df_prob[['Win_Boat', 'Boat_Number']].min(axis=1)
             df_prob['B2_fuku'] = df_prob[['Win_Boat', 'Boat_Number']].max(axis=1)
             df_fuku = df_prob.groupby(['Race_ID', 'B1_fuku', 'B2_fuku'])['P_2tan'].sum().reset_index(name='P_2fuku')
@@ -509,23 +530,31 @@ def run_v10_inference_and_notify(df_s1, df_s2):
                 rnum = int(rid.split('_')[2])
                 sched_time = r_info['Scheduled_Time']
                 
-                # ポートフォリオの合致確認
-                is_hit = (current_month, pid, place_name, cat) in valid_conditions
+                # 2連単・2連複それぞれの合致確認
+                is_hit_2t = (current_month, pid, place_name, cat) in valid_conditions_2t
+                is_hit_2f = (current_month, pid, place_name, cat) in valid_conditions_2f
+                is_hit = is_hit_2t or is_hit_2f
                 
-                reason_str = "✅ 合致: OOS黄金ポートフォリオ" if is_hit else "❌ 当場・当条件の勝負指定なし"
+                reason = []
+                if is_hit_2t: reason.append("2単")
+                if is_hit_2f: reason.append("2複")
+                reason_str = f"✅ 合致: {','.join(reason)}" if is_hit else "❌ 当場・当条件の勝負指定なし"
+                
                 if plid not in debug_logs: debug_logs[plid] = []
                 debug_logs[plid].append({'rnum': rnum, 'pid': pid, 'cat': cat, 'is_hit': is_hit, 'reason': reason_str})
                 
                 if is_hit:
                     grade = "SG" if pid == "P0_SG" else "G1" if pid == "P1_G1_Elite" else "女子" if pid == "P2_Ladies" else "一般" if pid == "P3_General_Std" else "企画"
                     
-                    b_2t = best_2tan_df[best_2tan_df['Race_ID'] == rid].iloc[0]
-                    t_2t = f"{int(b_2t['Win_Boat'])}-{int(b_2t['Boat_Number'])}"
-                    buys_2t.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': t_2t, 'prob': b_2t['P_2tan']})
+                    if is_hit_2t:
+                        b_2t = best_2tan_df[best_2tan_df['Race_ID'] == rid].iloc[0]
+                        t_2t = f"{int(b_2t['Win_Boat'])}-{int(b_2t['Boat_Number'])}"
+                        buys_2t.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': t_2t, 'prob': b_2t['P_2tan']})
                     
-                    b_2f = best_2fuku_df[best_2fuku_df['Race_ID'] == rid].iloc[0]
-                    t_2f = f"{int(b_2f['B1_fuku'])}={int(b_2f['B2_fuku'])}"
-                    buys_2f.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': t_2f, 'prob': b_2f['P_2fuku']})
+                    if is_hit_2f:
+                        b_2f = best_2fuku_df[best_2fuku_df['Race_ID'] == rid].iloc[0]
+                        t_2f = f"{int(b_2f['B1_fuku'])}={int(b_2f['B2_fuku'])}"
+                        buys_2f.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': t_2f, 'prob': b_2f['P_2fuku']})
                     
         except Exception as e: 
             logger.error(f"AI Error ({pid}): {e}")
@@ -563,7 +592,7 @@ def run_v10_inference_and_notify(df_s1, df_s2):
 
     buys_all = sorted(buys_all, key=lambda x: (x['p'], x['r'], x['type']))
 
-    msg += f"\n■ 本日の勝負レース (計{len(buys_all)}件)\n"
+    msg += f"\n■ 本日の厳選勝負レース (計{len(buys_all)}件)\n"
     prev_race_key = ""
     for b in buys_all:
         current_race_key = f"{b['p']}_{b['r']}"
@@ -577,7 +606,7 @@ def run_v10_inference_and_notify(df_s1, df_s2):
     logger.info(f"V10買い目送信完了: 買い目計{len(buys_all)}件")
 
 def main():
-    logger.info("🚀 V9 System Start (LambdaRank Hybrid Edition)")
+    logger.info("🚀 V10 System Start (Conditional Probability Edition)")
     
     # 💡 GitHub Actions環境の場合のみ、Driveから必須ファイルを一式ダウンロード
     if os.environ.get("GITHUB_ACTIONS") == "true":
