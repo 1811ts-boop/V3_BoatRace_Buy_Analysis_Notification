@@ -83,6 +83,7 @@ def prepare_ai_models(service):
     
     download_latest_file_by_name(service, TIDE_CSV_NAME)
     logger.info("   - マスターデータ(500MB超)をダウンロード中...少々お待ちください")
+    download_latest_file_by_name(service, MASTER_CSV_NAME)
     download_latest_file_by_name(service, PORTFOLIO_2TAN_CSV)
     download_latest_file_by_name(service, PORTFOLIO_2FUKU_CSV)
     
@@ -439,6 +440,17 @@ def run_v10_inference_and_notify(df_s1, df_s2):
     buys_2f = []
     debug_logs = {}
 
+    # 💡【追加】カプセル化されたモデルから特徴量名を安全に取得するヘルパー関数
+    def get_feature_names(mdl):
+        if hasattr(mdl, 'feature_name') and callable(mdl.feature_name): return mdl.feature_name()
+        if hasattr(mdl, 'feature_name_'): return mdl.feature_name_
+        if hasattr(mdl, 'booster_'): return mdl.booster_.feature_name()
+        if hasattr(mdl, 'calibrated_classifiers_'):
+            est = mdl.calibrated_classifiers_[0].estimator
+            if hasattr(est, 'booster_'): return est.booster_.feature_name()
+            if hasattr(est, 'feature_name_'): return est.feature_name_
+        return []
+
     for pid in PROJECT_IDS:
         ds1 = df_s1[df_s1['Project_ID'] == pid].copy()
         if ds1.empty: continue
@@ -449,7 +461,9 @@ def run_v10_inference_and_notify(df_s1, df_s2):
             if not os.path.exists(m1_path): continue
             with open(m1_path, 'rb') as f: stage1_model = pickle.load(f)
             
-            X1 = ds1[stage1_model.feature_name()].copy()
+            # 💡【修正】直接呼び出さず、追加した関数を通す
+            features_s1 = get_feature_names(stage1_model)
+            X1 = ds1[features_s1].copy()
             for col in X1.columns: X1[col] = pd.to_numeric(X1[col], errors='coerce').fillna(0.0)
             
             for c, cats in CATEGORIES_DEF_S1.items():
