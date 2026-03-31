@@ -42,6 +42,7 @@ TIDE_CSV_NAME = "Tide_Master_2020_2026.csv"
 MASTER_CSV_NAME = "BoatRace_Master_Updated_with_2Tan_2Fuku.csv"
 PORTFOLIO_2TAN = "V9_Portfolio_Final_2Tan.csv"
 PORTFOLIO_2FUKU = "V9_Portfolio_Final_2Fuku.csv"
+ADVANCED_SWEEP_CSV = "V9_Advanced_Sweep_Results.csv"  # 💡これを追加
 
 PROJECT_IDS = ['P0_SG', 'P1_G1_Elite', 'P2_Ladies', 'P3_General_Std', 'P4_Planning']
 MAX_WORKERS = 3  
@@ -86,6 +87,7 @@ def prepare_ai_models(service):
     download_latest_file_by_name(service, MASTER_CSV_NAME)
     download_latest_file_by_name(service, PORTFOLIO_2TAN)
     download_latest_file_by_name(service, PORTFOLIO_2FUKU)
+    download_latest_file_by_name(service, ADVANCED_SWEEP_CSV) # 💡これを追加
     
     for pid in PROJECT_IDS:
         download_latest_file_by_name(service, f"LGBM_Stage1_V9_{pid}.pkl", "Models_Stage1_V9")
@@ -431,12 +433,18 @@ def calculate_probabilities(scores):
 def run_v9_inference_and_notify(df_s1, df_s2):
     current_month = TODAY_OBJ.month
     
-    if not os.path.exists(PORTFOLIO_2TAN) or not os.path.exists(PORTFOLIO_2FUKU):
-        send_line_broadcast("❌ V9ポートフォリオファイルが読み込めませんでした。稼働を停止します。")
+    if not os.path.exists(PORTFOLIO_2TAN) or not os.path.exists(PORTFOLIO_2FUKU) or not os.path.exists(ADVANCED_SWEEP_CSV):
+        send_line_broadcast("❌ V9ポートフォリオまたは詳細データが読み込めませんでした。")
         return
         
     df_port_2t = pd.read_csv(PORTFOLIO_2TAN)
     df_port_2f = pd.read_csv(PORTFOLIO_2FUKU)
+    df_adv = pd.read_csv(ADVANCED_SWEEP_CSV)
+
+    # 💡 買い目リスト(ポートフォリオ)と詳細データ(Sweep結果)を結合
+    keys = ['Month', 'Project_ID', '場名', 'Rough_Category']
+    df_port_2t = pd.merge(df_port_2t, df_adv, on=keys, how='inner')
+    df_port_2f = pd.merge(df_port_2f, df_adv, on=keys, how='inner')
 
     # --- 1. ポートフォリオのプラス年数解析 ---
     def parse_plus_yrs(val):
@@ -445,38 +453,21 @@ def run_v9_inference_and_notify(df_s1, df_s2):
             return int(p[0]), int(p[1]) if len(p)==2 else 0
         except: return 0, 0
 
-    # 🎯 2連単のフィルタリングとパース（V10式：動的カラム取得）
-    plus_col_2t = [col for col in df_port_2t.columns if 'プラス年数' in col]
-    if not plus_col_2t:
-        logger.error("❌ 2連単ポートフォリオに『プラス年数』を含む列が見つかりません。")
-        return
-    df_port_2t[['Plus', 'Active']] = pd.DataFrame(df_port_2t[plus_col_2t[0]].apply(parse_plus_yrs).tolist(), index=df_port_2t.index)
-    df_port_2t = df_port_2t[(df_port_2t['OOS(未知)_統合レース数'] >= 15) & (df_port_2t['OOS(未知)_統合ROI'] >= 105) & (df_port_2t['Active'] >= 2) & (df_port_2t['Plus'] >= 2)]
-
-    # 🛡️ 2連複のフィルタリングとパース（V10式：動的カラム取得）
-    plus_col_2f = [col for col in df_port_2f.columns if 'プラス年数' in col]
-    if not plus_col_2f:
-        logger.error("❌ 2連複ポートフォリオに『プラス年数』を含む列が見つかりません。")
-        return
-    df_port_2f[['Plus', 'Active']] = pd.DataFrame(df_port_2f[plus_col_2f[0]].apply(parse_plus_yrs).tolist(), index=df_port_2f.index)
-    df_port_2f = df_port_2f[(df_port_2f['OOS(未知)_統合レース数'] >= 15) & (df_port_2f['OOS(未知)_統合2連複_ROI'] >= 105) & (df_port_2f['Active'] >= 2) & (df_port_2f['Plus'] >= 2)]
+    # 結合したデータから正確なカラム名を使ってパース
+    df_port_2t[['Plus', 'Active']] = pd.DataFrame(df_port_2t['100超_年数_2連単'].apply(parse_plus_yrs).tolist(), index=df_port_2t.index)
+    df_port_2f[['Plus', 'Active']] = pd.DataFrame(df_port_2f['100超_年数_2連複'].apply(parse_plus_yrs).tolist(), index=df_port_2f.index)
 
     # --- 2. 💰 資金プッシュ度（ケリー基準ベース）の自動判定ロジック ---
     def get_bet_multiplier(races, roi, active, plus):
         if active == 0 or pd.isna(races) or pd.isna(roi): return 0
-        # 🔥 Sランク：5倍（絶対的エース：サンプル多 or 超高回収 ＆ 全年プラス）
         if ((races >= 40 and roi >= 115) or (races >= 25 and roi >= 135)) and (plus == active): return 5
-        # 💰 Aランク：3倍（主軸：高回収 ＆ 1年の下振れまで許容）
         if ((races >= 20 and roi >= 115) or (races >= 15 and roi >= 130)) and (plus >= active - 1): return 3
-        # 🪙 Bランク：1倍（ポートフォリオの基礎条件をクリアしたその他すべて）
         return 1
 
-    # 🎯 2連単の倍率算出
-    df_port_2t['Bet_Multi'] = df_port_2t.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合ROI'], x['Active'], x['Plus']), axis=1)
-    # 🛡️ 2連複の倍率算出
-    df_port_2f['Bet_Multi'] = df_port_2f.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合2連複_ROI'], x['Active'], x['Plus']), axis=1)
+    df_port_2t['Bet_Multi'] = df_port_2t.apply(lambda x: get_bet_multiplier(x['総レース数'], x['通算ROI_2連単'], x['Active'], x['Plus']), axis=1)
+    df_port_2f['Bet_Multi'] = df_port_2f.apply(lambda x: get_bet_multiplier(x['総レース数'], x['通算ROI_2連複'], x['Active'], x['Plus']), axis=1)
 
-    # 検索高速化のための辞書作成 (Month, Project_ID, 場名, Rough_Category) -> 倍率(Bet_Multi)
+    # 辞書化
     valid_conditions_2t = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): row['Bet_Multi'] for _, row in df_port_2t.iterrows()}
     valid_conditions_2f = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): row['Bet_Multi'] for _, row in df_port_2f.iterrows()}
     
