@@ -40,9 +40,8 @@ OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 
 TIDE_CSV_NAME = "Tide_Master_2020_2026.csv"
 MASTER_CSV_NAME = "BoatRace_Master_Updated_with_2Tan_2Fuku.csv"
-PORTFOLIO_2TAN = "V9_Portfolio_Final_2Tan.csv"
-PORTFOLIO_2FUKU = "V9_Portfolio_Final_2Fuku.csv"
-ADVANCED_SWEEP_CSV = "V9_Advanced_Sweep_Results.csv"  # 💡これを追加
+# 💡 Finalファイルは不要になるため削除。大元のシミュレーション結果だけを読み込みます
+ADVANCED_SWEEP_CSV = "V9_Advanced_Sweep_Results.csv"
 
 PROJECT_IDS = ['P0_SG', 'P1_G1_Elite', 'P2_Ladies', 'P3_General_Std', 'P4_Planning']
 MAX_WORKERS = 3  
@@ -85,9 +84,8 @@ def prepare_ai_models(service):
     download_latest_file_by_name(service, TIDE_CSV_NAME)
     logger.info("   - マスターデータ(500MB超)をダウンロード中...少々お待ちください")
     download_latest_file_by_name(service, MASTER_CSV_NAME)
-    download_latest_file_by_name(service, PORTFOLIO_2TAN)
-    download_latest_file_by_name(service, PORTFOLIO_2FUKU)
-    download_latest_file_by_name(service, ADVANCED_SWEEP_CSV) # 💡これを追加
+    # 💡 2つのFinalファイルの代わりに、これ1つだけをDriveから拾ってきます
+    download_latest_file_by_name(service, ADVANCED_SWEEP_CSV)
     
     for pid in PROJECT_IDS:
         download_latest_file_by_name(service, f"LGBM_Stage1_V9_{pid}.pkl", "Models_Stage1_V9")
@@ -433,43 +431,43 @@ def calculate_probabilities(scores):
 def run_v9_inference_and_notify(df_s1, df_s2):
     current_month = TODAY_OBJ.month
     
-    if not os.path.exists(PORTFOLIO_2TAN) or not os.path.exists(PORTFOLIO_2FUKU) or not os.path.exists(ADVANCED_SWEEP_CSV):
-        send_line_broadcast("❌ V9ポートフォリオまたは詳細データが読み込めませんでした。")
+    if not os.path.exists(ADVANCED_SWEEP_CSV):
+        send_line_broadcast("❌ V9シミュレーションデータが見つかりませんでした。稼働を停止します。")
         return
         
-    df_port_2t = pd.read_csv(PORTFOLIO_2TAN)
-    df_port_2f = pd.read_csv(PORTFOLIO_2FUKU)
     df_adv = pd.read_csv(ADVANCED_SWEEP_CSV)
-
-    # 💡 買い目リスト(ポートフォリオ)と詳細データ(Sweep結果)を結合
-    keys = ['Month', 'Project_ID', '場名', 'Rough_Category']
-    df_port_2t = pd.merge(df_port_2t, df_adv, on=keys, how='inner')
-    df_port_2f = pd.merge(df_port_2f, df_adv, on=keys, how='inner')
-
-    # --- 1. ポートフォリオのプラス年数解析 ---
+    
+    # --- 💰 V10完全互換：動的フィルタリングとケリー基準の自動判定 ---
     def parse_plus_yrs(val):
         try:
             p = str(val).split('/')
             return int(p[0]), int(p[1]) if len(p)==2 else 0
-        except: return 0, 0
-
-    # 結合したデータから正確なカラム名を使ってパース
-    df_port_2t[['Plus', 'Active']] = pd.DataFrame(df_port_2t['100超_年数_2連単'].apply(parse_plus_yrs).tolist(), index=df_port_2t.index)
-    df_port_2f[['Plus', 'Active']] = pd.DataFrame(df_port_2f['100超_年数_2連複'].apply(parse_plus_yrs).tolist(), index=df_port_2f.index)
-
-    # --- 2. 💰 資金プッシュ度（ケリー基準ベース）の自動判定ロジック ---
+        except:
+            return 0, 0
+            
+    # 100超_年数 を分解
+    df_adv[['Plus_2t', 'Active_2t']] = pd.DataFrame(df_adv['100超_年数_2連単'].apply(parse_plus_yrs).tolist(), index=df_adv.index)
+    df_adv[['Plus_2f', 'Active_2f']] = pd.DataFrame(df_adv['100超_年数_2連複'].apply(parse_plus_yrs).tolist(), index=df_adv.index)
+    
     def get_bet_multiplier(races, roi, active, plus):
-        if active == 0 or pd.isna(races) or pd.isna(roi): return 0
-        if ((races >= 40 and roi >= 115) or (races >= 25 and roi >= 135)) and (plus == active): return 5
-        if ((races >= 20 and roi >= 115) or (races >= 15 and roi >= 130)) and (plus >= active - 1): return 3
-        return 1
+        win_ratio = plus / active if active > 0 else 0
+        # 👑 Sランク：5倍（130%&30R or 150%&20R かつ 達成年数100%）
+        if ((races >= 30 and roi >= 130) or (races >= 20 and roi >= 150)) and win_ratio == 1.0:
+            return 5
+        # 🎖️ Aランク：3倍（115%&20R or 130%&15R かつ 達成年数60%以上）
+        if ((races >= 20 and roi >= 115) or (races >= 15 and roi >= 130)) and win_ratio >= 0.6:
+            return 3
+        # 🛡️ Bランク：1倍（足切り条件クリア）
+        if races >= 15 and roi >= 105 and active >= 2 and plus >= 2:
+            return 1
+        return 0 # 条件未達は0倍（見送り）
 
-    df_port_2t['Bet_Multi'] = df_port_2t.apply(lambda x: get_bet_multiplier(x['総レース数'], x['通算ROI_2連単'], x['Active'], x['Plus']), axis=1)
-    df_port_2f['Bet_Multi'] = df_port_2f.apply(lambda x: get_bet_multiplier(x['総レース数'], x['通算ROI_2連複'], x['Active'], x['Plus']), axis=1)
+    df_adv['Bet_Multi_2t'] = df_adv.apply(lambda x: get_bet_multiplier(x['総レース数'], x['通算ROI_2連単'], x['Active_2t'], x['Plus_2t']), axis=1)
+    df_adv['Bet_Multi_2f'] = df_adv.apply(lambda x: get_bet_multiplier(x['総レース数'], x['通算ROI_2連複'], x['Active_2f'], x['Plus_2f']), axis=1)
 
-    # 辞書化
-    valid_conditions_2t = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): row['Bet_Multi'] for _, row in df_port_2t.iterrows()}
-    valid_conditions_2f = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): row['Bet_Multi'] for _, row in df_port_2f.iterrows()}
+    # 辞書作成（Bet_Multiが1以上の「黄金条件」だけを登録）
+    dict_2t = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): row['Bet_Multi_2t'] for _, row in df_adv.iterrows() if row['Bet_Multi_2t'] > 0}
+    dict_2f = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): row['Bet_Multi_2f'] for _, row in df_adv.iterrows() if row['Bet_Multi_2f'] > 0}
     
     buys_2t = []
     buys_2f = []
@@ -491,7 +489,47 @@ def run_v9_inference_and_notify(df_s1, df_s2):
                 if c in X1.columns: X1[c] = pd.Categorical(X1[c].fillna(cats[0]).astype(int), categories=cats, ordered=False).codes
             ds1['Stage1_Rough_Prob'] = m1.predict(X1.astype(float).values)
             
-            ds2 = df_s2[df_s2['Project_ID'] == pid].merge(ds1[['Race_ID', 'Stage1_Rough_Prob']], on='Race_ID', how='inner')
+            # 💡【超・最適化】Stage1直後にポートフォリオ照合とログ記録を行う
+            race_info_s1 = ds1[['Race_ID', 'PlaceID', 'Scheduled_Time', 'Stage1_Rough_Prob']].drop_duplicates('Race_ID')
+            target_rids_2t = {}
+            target_rids_2f = {}
+            has_hit_in_pid = False
+            
+            for _, r_info in race_info_s1.iterrows():
+                rid = r_info['Race_ID']
+                plid = int(r_info['PlaceID'])
+                place_name = JCD_MAP.get(f"{plid:02d}", "不明")
+                cat = get_rough_cat(r_info['Stage1_Rough_Prob'])
+                rnum = int(rid.split('_')[2])
+                
+                multi_2t = dict_2t.get((current_month, pid, place_name, cat), 0)
+                multi_2f = dict_2f.get((current_month, pid, place_name, cat), 0)
+                
+                is_hit = (multi_2t > 0) or (multi_2f > 0)
+                
+                reason = []
+                if multi_2t > 0: 
+                    reason.append(f"2単({multi_2t}倍)")
+                    target_rids_2t[rid] = multi_2t
+                if multi_2f > 0: 
+                    reason.append(f"2複({multi_2f}倍)")
+                    target_rids_2f[rid] = multi_2f
+                
+                if is_hit: has_hit_in_pid = True
+                reason_str = f"✅ 合致: {','.join(reason)}" if is_hit else "❌ 当場・当条件の勝負指定なし"
+                
+                if plid not in debug_logs: debug_logs[plid] = []
+                debug_logs[plid].append({'rnum': rnum, 'pid': pid, 'cat': cat, 'is_hit': is_hit, 'reason': reason_str})
+            
+            # 💡 合致レースが1つも無ければ、重いStage2(LambdaRank推論)をスキップして爆速化
+            if not has_hit_in_pid:
+                continue
+
+            # --- ⚡ Stage 2 準備 ---
+            # 💡対象レースのみに絞り込んでから推論を行う
+            target_all_rids = set(target_rids_2t.keys()) | set(target_rids_2f.keys())
+            ds2 = df_s2[(df_s2['Project_ID'] == pid) & (df_s2['Race_ID'].isin(target_all_rids))].merge(ds1[['Race_ID', 'Stage1_Rough_Prob']], on='Race_ID', how='inner')
+            
             m2_path = f"Models_Stage2_V9/LGBM_Stage2_LambdaRank_V9_{pid}.pkl"
             if not os.path.exists(m2_path): continue
             with open(m2_path, 'rb') as f: m2 = pickle.load(f)
@@ -503,46 +541,33 @@ def run_v9_inference_and_notify(df_s1, df_s2):
                 if c in X2.columns: X2[c] = pd.Categorical(X2[c].fillna(cats[0]).astype(int), categories=cats, ordered=False).codes
             ds2['Pred_Score'] = m2.predict(X2.astype(float).values)
             
-            # ポートフォリオ照合と確率計算
+            # 買い目抽出 (ログ出力は上で済ませている)
+            grade = "SG" if pid == "P0_SG" else "G1" if pid == "P1_G1_Elite" else "女子" if pid == "P2_Ladies" else "一般" if pid == "P3_General_Std" else "企画"
+            
             for rid, grp in ds2.groupby('Race_ID', sort=False):
                 if len(grp) != 6: continue
-                
-                plid = int(grp['PlaceID'].iloc[0])
+                r_info = race_info_s1[race_info_s1['Race_ID'] == rid].iloc[0]
+                plid = int(r_info['PlaceID'])
                 place_name = JCD_MAP.get(f"{plid:02d}", "不明")
-                cat = get_rough_cat(grp['Stage1_Rough_Prob'].iloc[0])
                 rnum = int(rid.split('_')[2])
-                sched_time = grp['Scheduled_Time'].iloc[0]
+                sched_time = r_info['Scheduled_Time']
+                cat = get_rough_cat(r_info['Stage1_Rough_Prob'])
+
+                scores = {int(r['Boat_Number']): float(r['Pred_Score']) for _, r in grp.iterrows()}
+                p_2tan, p_2fuku = calculate_probabilities(scores)
                 
-                # 倍率を取得（0なら不適合）
-                multi_2t = valid_conditions_2t.get((current_month, pid, place_name, cat), 0)
-                multi_2f = valid_conditions_2f.get((current_month, pid, place_name, cat), 0)
+                if rid in target_rids_2t:
+                    multi = target_rids_2t[rid]
+                    best_2tan = sorted(p_2tan.items(), key=lambda x: x[1], reverse=True)[0]
+                    m_icon = "🔥5倍" if multi == 5 else "💰3倍" if multi == 3 else "🪙1倍"
+                    buys_2t.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': best_2tan[0], 'prob': best_2tan[1], 'multi': multi, 'm_icon': m_icon})
                 
-                is_hit = (multi_2t > 0) or (multi_2f > 0)
-                reason = []
-                if multi_2t > 0: reason.append(f"2単({multi_2t}倍)")
-                if multi_2f > 0: reason.append(f"2複({multi_2f}倍)")
-                reason_str = f"✅ 合致: {','.join(reason)}" if is_hit else "❌ 当場・当条件の勝負指定なし"
-                
-                if plid not in debug_logs: debug_logs[plid] = []
-                debug_logs[plid].append({'rnum': rnum, 'pid': pid, 'cat': cat, 'is_hit': is_hit, 'reason': reason_str})
-                
-                if is_hit:
-                    scores = {int(r['Boat_Number']): float(r['Pred_Score']) for _, r in grp.iterrows()}
-                    p_2tan, p_2fuku = calculate_probabilities(scores)
-                    grade = "SG" if pid == "P0_SG" else "G1" if pid == "P1_G1_Elite" else "女子" if pid == "P2_Ladies" else "一般" if pid == "P3_General_Std" else "企画"
+                if rid in target_rids_2f:
+                    multi = target_rids_2f[rid]
+                    best_2fuku = sorted(p_2fuku.items(), key=lambda x: x[1], reverse=True)[0]
+                    m_icon = "🔥5倍" if multi == 5 else "💰3倍" if multi == 3 else "🪙1倍"
+                    buys_2f.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': best_2fuku[0], 'prob': best_2fuku[1], 'multi': multi, 'm_icon': m_icon})
                     
-                    # 🎯 2連単の買い目抽出
-                    if multi_2t > 0:
-                        best_2tan = sorted(p_2tan.items(), key=lambda x: x[1], reverse=True)[0]
-                        m_icon = "🔥5倍" if multi_2t == 5 else "💰3倍" if multi_2t == 3 else "🪙1倍"
-                        buys_2t.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': best_2tan[0], 'prob': best_2tan[1], 'multi': multi_2t, 'm_icon': m_icon})
-                    
-                    # 🛡️ 2連複の買い目抽出
-                    if multi_2f > 0:
-                        best_2fuku = sorted(p_2fuku.items(), key=lambda x: x[1], reverse=True)[0]
-                        m_icon = "🔥5倍" if multi_2f == 5 else "💰3倍" if multi_2f == 3 else "🪙1倍"
-                        buys_2f.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': best_2fuku[0], 'prob': best_2fuku[1], 'multi': multi_2f, 'm_icon': m_icon})
-                        
         except Exception as e: 
             logger.error(f"AI Error ({pid}): {e}")
 
@@ -552,8 +577,7 @@ def run_v9_inference_and_notify(df_s1, df_s2):
         place_name = JCD_MAP.get(f"{plid:02d}", "不明")
         races = sorted(debug_logs[plid], key=lambda x: x['rnum'])
         pid_groups = {}
-        for r in races:
-            pid_groups.setdefault(r['pid'], []).append(r)
+        for r in races: pid_groups.setdefault(r['pid'], []).append(r)
             
         for p_id, p_races in pid_groups.items():
             logger.info(f"🚤 {place_name} ({p_id}) - {len(p_races)}レース分析")
@@ -563,51 +587,44 @@ def run_v9_inference_and_notify(df_s1, df_s2):
     logger.info("======================================")
 
     # LINE通知の組み立て
-    msg = f"🤖 V9 LambdaRank AI (Kelly Edition)\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n"
+    msg = f"🤖 V9 LambdaRank AI\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n"
     
     if not buys_2t and not buys_2f:
         msg += "\n本日は勝負条件に合致するレースがありません。\n資金を温存します。"
         send_line_broadcast(msg)
         return
 
-    # 2連単と2連複のリストを統合し、種類を追加
     buys_all = []
     for b in buys_2t:
-        b['type'] = '🎯2連単'
+        b['type'] = '🎯2単'
         buys_all.append(b)
     for b in buys_2f:
-        b['type'] = '🛡️2連複'
+        b['type'] = '🛡️2複'
         buys_all.append(b)
 
-    # 💡 ソート順：倍率が高い順（5倍→3倍→1倍）→ 会場 → レース番号 → 券種
+    # 💡 ソート順：倍率が高い順（5倍→3倍→1倍）→ 会場 → レース番号
     buys_all = sorted(buys_all, key=lambda x: (-x['multi'], x['p'], x['r'], x['type']))
 
     msg += f"\n■ 本日の厳選勝負レース (計{len(buys_all)}件)\n"
-    
     prev_multi = -1
     prev_race_key = ""
     
     for b in buys_all:
-        # 倍率が変わったタイミングで見出し（ゾーン）を挿入
         if b['multi'] != prev_multi:
-            msg += f"\n▼ {b['m_icon']}勝負ゾーン ▼\n"
+            msg += f"\n▼ {b['m_icon']}勝負ゾーン\n"
             prev_multi = b['multi']
-            prev_race_key = "" # ゾーンが変わったらレース見出しも出すためリセット
+            prev_race_key = ""
             
         current_race_key = f"{b['p']}_{b['r']}"
-        
-        # 新しいレースの時だけ見出しを出す
         if current_race_key != prev_race_key:
-            msg += f"[{b['time']}] {b['place']} {b['r']}R\n"
-            msg += f" ├ {b['grade']} / {b['cat']}\n"
+            msg += f"[{b['time']}] {b['place']} {b['r']}R ({b['cat']})\n"
             prev_race_key = current_race_key
             
-        # 買い目は毎回出す
         msg += f" └ {b['type']}: {b['ticket']} (推定勝率: {b['prob']*100:.1f}%)\n"
 
     send_line_broadcast(msg.strip())
     logger.info(f"V9買い目送信完了: 買い目計{len(buys_all)}件")
-
+    
 def main():
     logger.info("🚀 V9 System Start (LambdaRank Hybrid Edition)")
     
