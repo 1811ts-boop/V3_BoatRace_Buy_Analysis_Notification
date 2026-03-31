@@ -40,8 +40,7 @@ OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 
 TIDE_CSV_NAME = "Tide_Master_2020_2026.csv"
 MASTER_CSV_NAME = "BoatRace_Master_Updated_with_2Tan_2Fuku.csv"
-# 💡 Finalファイルは不要になるため削除。大元のシミュレーション結果だけを読み込みます
-ADVANCED_SWEEP_CSV = "V9_Advanced_Sweep_Results.csv"
+ADVANCED_SWEEP_CSV = "V9_Advanced_Sweep_Results.csv" # 💡Finalを消し、これ1つに統合
 
 PROJECT_IDS = ['P0_SG', 'P1_G1_Elite', 'P2_Ladies', 'P3_General_Std', 'P4_Planning']
 MAX_WORKERS = 3  
@@ -84,8 +83,7 @@ def prepare_ai_models(service):
     download_latest_file_by_name(service, TIDE_CSV_NAME)
     logger.info("   - マスターデータ(500MB超)をダウンロード中...少々お待ちください")
     download_latest_file_by_name(service, MASTER_CSV_NAME)
-    # 💡 2つのFinalファイルの代わりに、これ1つだけをDriveから拾ってきます
-    download_latest_file_by_name(service, ADVANCED_SWEEP_CSV)
+    download_latest_file_by_name(service, ADVANCED_SWEEP_CSV) # 💡ここを変更
     
     for pid in PROJECT_IDS:
         download_latest_file_by_name(service, f"LGBM_Stage1_V9_{pid}.pkl", "Models_Stage1_V9")
@@ -401,7 +399,7 @@ def transform_for_v9_inference(df_raw, df_tide, dict_motor, dict_boat):
     return pd.DataFrame(fs1), pd.DataFrame(fs2)
 
 # =============================================================================
-# 6. V9 ハイブリッド推論 ＆ LINE通知
+# 6. V9 ハイブリッド推論 ＆ LINE通知 (Kelly Criterion & 高速化対応版)
 # =============================================================================
 def get_rough_cat(p): return "超堅め(0-20%)" if p < 0.2 else "やや堅め(20-40%)" if p < 0.4 else "普通(40-60%)" if p < 0.6 else "やや荒れ(60-80%)" if p < 0.8 else "大荒れ(80-100%)"
 
@@ -445,25 +443,21 @@ def run_v9_inference_and_notify(df_s1, df_s2):
         except:
             return 0, 0
             
-    # 100超_年数 を分解
-    df_adv[['Plus_2t', 'Active_2t']] = pd.DataFrame(df_adv['100超_年数_2連単'].apply(parse_plus_yrs).tolist(), index=df_adv.index)
-    df_adv[['Plus_2f', 'Active_2f']] = pd.DataFrame(df_adv['100超_年数_2連複'].apply(parse_plus_yrs).tolist(), index=df_adv.index)
+    df_adv[['Plus_2t', 'Active_2t']] = pd.DataFrame(df_adv['OOS_プラス年数(24~26年)'].apply(parse_plus_yrs).tolist(), index=df_adv.index)
+    df_adv[['Plus_2f', 'Active_2f']] = pd.DataFrame(df_adv['OOS_2連複_プラス年数(24~26年)'].apply(parse_plus_yrs).tolist(), index=df_adv.index)
     
     def get_bet_multiplier(races, roi, active, plus):
         win_ratio = plus / active if active > 0 else 0
-        # 👑 Sランク：5倍（130%&30R or 150%&20R かつ 達成年数100%）
-        if ((races >= 30 and roi >= 130) or (races >= 20 and roi >= 150)) and win_ratio == 1.0:
-            return 5
-        # 🎖️ Aランク：3倍（115%&20R or 130%&15R かつ 達成年数60%以上）
-        if ((races >= 20 and roi >= 115) or (races >= 15 and roi >= 130)) and win_ratio >= 0.6:
-            return 3
-        # 🛡️ Bランク：1倍（足切り条件クリア）
-        if races >= 15 and roi >= 105 and active >= 2 and plus >= 2:
-            return 1
-        return 0 # 条件未達は0倍（見送り）
+        # 👑 Sランク：5倍
+        if ((races >= 30 and roi >= 130) or (races >= 20 and roi >= 150)) and win_ratio == 1.0: return 5
+        # 🎖️ Aランク：3倍
+        if ((races >= 20 and roi >= 115) or (races >= 15 and roi >= 130)) and win_ratio >= 0.6: return 3
+        # 🛡️ Bランク：1倍（大前提の足切りクリア）
+        if races >= 15 and roi >= 105 and active >= 2 and plus >= 2: return 1
+        return 0
 
-    df_adv['Bet_Multi_2t'] = df_adv.apply(lambda x: get_bet_multiplier(x['総レース数'], x['通算ROI_2連単'], x['Active_2t'], x['Plus_2t']), axis=1)
-    df_adv['Bet_Multi_2f'] = df_adv.apply(lambda x: get_bet_multiplier(x['総レース数'], x['通算ROI_2連複'], x['Active_2f'], x['Plus_2f']), axis=1)
+    df_adv['Bet_Multi_2t'] = df_adv.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合ROI'], x['Active_2t'], x['Plus_2t']), axis=1)
+    df_adv['Bet_Multi_2f'] = df_adv.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合2連複_ROI'], x['Active_2f'], x['Plus_2f']), axis=1)
 
     # 辞書作成（Bet_Multiが1以上の「黄金条件」だけを登録）
     dict_2t = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): row['Bet_Multi_2t'] for _, row in df_adv.iterrows() if row['Bet_Multi_2t'] > 0}
@@ -526,7 +520,6 @@ def run_v9_inference_and_notify(df_s1, df_s2):
                 continue
 
             # --- ⚡ Stage 2 準備 ---
-            # 💡対象レースのみに絞り込んでから推論を行う
             target_all_rids = set(target_rids_2t.keys()) | set(target_rids_2f.keys())
             ds2 = df_s2[(df_s2['Project_ID'] == pid) & (df_s2['Race_ID'].isin(target_all_rids))].merge(ds1[['Race_ID', 'Stage1_Rough_Prob']], on='Race_ID', how='inner')
             
@@ -624,11 +617,10 @@ def run_v9_inference_and_notify(df_s1, df_s2):
 
     send_line_broadcast(msg.strip())
     logger.info(f"V9買い目送信完了: 買い目計{len(buys_all)}件")
-    
+
 def main():
     logger.info("🚀 V9 System Start (LambdaRank Hybrid Edition)")
     
-    # 💡 GitHub Actions環境の場合のみ、Driveから必須ファイルを一式ダウンロード
     if os.environ.get("GITHUB_ACTIONS") == "true":
         srv = get_drive_service()
         if srv: prepare_ai_models(srv)
