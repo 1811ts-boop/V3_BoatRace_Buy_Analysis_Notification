@@ -31,7 +31,9 @@ JCD_MAP = {name: i for i, name in enumerate(["桐生", "戸田", "江戸川", "�
 def get_gcp_credentials():
     if not GCP_SA_CREDENTIALS: return None
     creds_dict = json.loads(GCP_SA_CREDENTIALS)
-    return service_account.Credentials.from_service_account_info(creds_dict)
+    # 💡 ⭕️ SCOPESを追加
+    SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    return service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
 
 def download_master_csv(creds):
     logger.info("☁️ Google Driveから最新のマスターデータをダウンロードします...")
