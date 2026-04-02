@@ -35,6 +35,7 @@ jobs:
           GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }} # 💡 これを追記！
         run: |
           python V10_DailyRun_Batch.py
 
@@ -48,6 +49,7 @@ jobs:
           GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }} # 💡 これを追記！
         run: |
           python V9_DailyRun_Batch.py
 
