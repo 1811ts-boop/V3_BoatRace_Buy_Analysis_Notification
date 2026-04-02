@@ -349,8 +349,8 @@ def main():
 
     jst = pytz.timezone('Asia/Tokyo')
     now_jst = datetime.now(jst)
-    # 実行日の「当日（今日）」を終了日に設定
-    end_date = now_jst.replace(tzinfo=None)
+    # 実行日の「前日」を終了日に設定
+    end_date = (now_jst - timedelta(days=1)).replace(tzinfo=None)
 
     if start_date > end_date:
         logger.info(f"すでに最新のデータ（{max_date_str}）まで取得済みです。更新は行いません。")
