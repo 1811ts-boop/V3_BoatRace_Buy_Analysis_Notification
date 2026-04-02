@@ -37,6 +37,7 @@ TODAY_OBJ = datetime.now(JST)
 GCP_SA_CREDENTIALS = os.environ.get("GCP_SA_CREDENTIALS")
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
+SPREADSHEET_ID = "ここにスプレッドシートの長いID文字列を貼り付けてください"
 
 TIDE_CSV_NAME = "Tide_Master_2020_2026.csv"
 MASTER_CSV_NAME = "BoatRace_Master_Updated_with_2Tan_2Fuku.csv"
@@ -98,6 +99,23 @@ def send_line_broadcast(msg):
         if resp.status_code != 200: logger.error(f"❌ LINE API Error: {resp.text}")
     except Exception as e:
         logger.error(f"❌ LINEリクエスト送信エラー: {e}")
+
+def append_to_spreadsheet(values):
+    if not GCP_SA_CREDENTIALS or not SPREADSHEET_ID: return
+    try:
+        creds_dict = json.loads(GCP_SA_CREDENTIALS)
+        creds = service_account.Credentials.from_service_account_info(creds_dict)
+        service = build('sheets', 'v4', credentials=creds)
+        body = {'values': values}
+        result = service.spreadsheets().values().append(
+            spreadsheetId=SPREADSHEET_ID,
+            range='シート1!A:R',
+            valueInputOption='USER_ENTERED',
+            body=body
+        ).execute()
+        logger.info(f"📝 スプレッドシートに {result.get('updates').get('updatedRows')} 行追記しました。")
+    except Exception as e:
+        logger.error(f"❌ スプレッドシート書き込みエラー: {e}")
 
 WEATHER_CACHE = {}
 def fetch_weather(place_id, target_time_str):
@@ -602,6 +620,9 @@ def run_v9_inference_and_notify(df_s1, df_s2):
     prev_multi = -1
     prev_race_key = ""
     
+    # 💡【追加】スプレッドシートへ送るデータを貯める箱を用意
+    sheet_data = []
+    
     for b in buys_all:
         if b['multi'] != prev_multi:
             msg += f"\n▼ {b['m_icon']}勝負ゾーン\n"
@@ -614,6 +635,30 @@ def run_v9_inference_and_notify(df_s1, df_s2):
             prev_race_key = current_race_key
             
         msg += f" └ {b['type']}: {b['ticket']} (推定勝率: {b['prob']*100:.1f}%)\n"
+
+        # --- 💡【追加】ここからスプレッドシート用データの作成 ---
+        date_str = TODAY_OBJ.strftime('%Y/%m/%d')
+        sys_name = "V9"  # 💡 V9用に設定
+        rank_str = f"{b['multi']}倍"
+        quant_bet = b['multi'] * 100
+        
+        # 気象データを取得して風向きを文字に変換
+        ws, wd, wc = fetch_weather(b['p'], b['time'])
+        wind_dir_str = "北" if (315 <= wd or wd < 45) else "東" if (45 <= wd < 135) else "南" if (135 <= wd < 225) else "西"
+        
+        # A〜R列の順番に合わせたリスト作成（結果・配当・収支の列は "" で空けておく）
+        row = [
+            date_str, b['time'], sys_name, b['place'], b['r'], rank_str, 
+            b['type'].replace('🎯', '').replace('🛡️', ''), b['ticket'], 
+            f"{b['prob']*100:.1f}%", f"{ws}m", wind_dir_str, 
+            "", 100, "", "", quant_bet, "", ""
+        ]
+        sheet_data.append(row)
+        # --- 💡 追加ここまで ---
+
+    # 💡【追加】LINEに送る直前に、貯めたデータをスプレッドシートへ一括書き込み
+    if sheet_data:
+        append_to_spreadsheet(sheet_data)
 
     send_line_broadcast(msg.strip())
     logger.info(f"V9買い目送信完了: 買い目計{len(buys_all)}件")
