@@ -37,7 +37,7 @@ TODAY_OBJ = datetime.now(JST)
 GCP_SA_CREDENTIALS = os.environ.get("GCP_SA_CREDENTIALS")
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
-SPREADSHEET_ID = "ここにスプレッドシートの長いID文字列を貼り付けてください"
+SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")  # 💡 ⭕️ 環境変数に変更！
 
 TIDE_CSV_NAME = "Tide_Master_2020_2026.csv"
 MASTER_CSV_NAME = "BoatRace_Master_Updated_with_2Tan_2Fuku.csv"
