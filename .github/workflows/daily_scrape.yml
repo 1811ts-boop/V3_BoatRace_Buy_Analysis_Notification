@@ -12,22 +12,30 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4 # 💡 v4にアップデート推奨
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v5 # 💡 v5にアップデート推奨
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.12' # 💡 推論側とバージョンを合わせるのが安全です
+        python-version: '3.12'
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install requests beautifulsoup4 pandas tqdm pytz google-api-python-client google-auth-httplib2 google-auth-oauthlib
 
-    # 💡 修正箇所: JSONファイルを作成するステップを削除し、直接スクリプトに環境変数を渡す
+    # 1. まずマスターデータを最新化する
     - name: Run Scraper Script
       env:
         GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
         GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
       run: |
         python scraper.py
+
+    # 2. 💡【追加】最新化されたマスターデータを使って、スプレッドシートの答え合わせをする
+    - name: Run Result Checker Script
+      env:
+        GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
+        SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }} # 💡 新しいシークレット
+      run: |
+        python Result_Checker.py
