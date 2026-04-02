@@ -109,7 +109,9 @@ def append_to_spreadsheet(values):
     if not GCP_SA_CREDENTIALS or not SPREADSHEET_ID: return
     try:
         creds_dict = json.loads(GCP_SA_CREDENTIALS)
-        creds = service_account.Credentials.from_service_account_info(creds_dict)
+        # 💡 ⭕️ Google DriveとSheetsの読み書き権限を明示的に要求する（SCOPESを追加）
+        SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         service = build('sheets', 'v4', credentials=creds)
         body = {'values': values}
         result = service.spreadsheets().values().append(
