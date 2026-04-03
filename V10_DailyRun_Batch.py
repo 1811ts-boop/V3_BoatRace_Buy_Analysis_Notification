@@ -116,7 +116,7 @@ def append_to_spreadsheet(values):
         body = {'values': values}
         result = service.spreadsheets().values().append(
             spreadsheetId=SPREADSHEET_ID,
-            range='シート1!A:R',
+            range='Sheet1!A:R',
             valueInputOption='USER_ENTERED',
             body=body
         ).execute()
