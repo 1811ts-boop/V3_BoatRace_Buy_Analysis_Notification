@@ -466,22 +466,22 @@ def run_v9_inference_and_notify(df_s1, df_s2):
     df_adv[['Plus_2t', 'Active_2t']] = pd.DataFrame(df_adv['OOS_プラス年数(24~26年)'].apply(parse_plus_yrs).tolist(), index=df_adv.index)
     df_adv[['Plus_2f', 'Active_2f']] = pd.DataFrame(df_adv['OOS_2連複_プラス年数(24~26年)'].apply(parse_plus_yrs).tolist(), index=df_adv.index)
     
-    def get_bet_multiplier(races, roi, active, plus):
+    # 💡 判定に「実際の的中率 (hit_rate)」と「足切りライン (min_hit_rate)」の引数を追加
+    def get_bet_multiplier(races, roi, active, plus, hit_rate, min_hit_rate):
         win_ratio = plus / active if active > 0 else 0
         # 👑 Sランク：5倍
         if ((races >= 30 and roi >= 130) or (races >= 20 and roi >= 150)) and win_ratio == 1.0: return 5
         # 🎖️ Aランク：3倍
         if ((races >= 20 and roi >= 115) or (races >= 15 and roi >= 130)) and win_ratio >= 0.6: return 3
-        # 🛡️ Bランク：1倍（大前提の足切りクリア）
-        if races >= 15 and roi >= 105 and active >= 2 and plus >= 2: return 1
+        
+        # 🛡️ Bランク：1倍（★提案Aの条件：10レース以上、ROI105%以上、指定的中率クリア、勝率50%以上）
+        if races >= 10 and roi >= 105 and hit_rate >= min_hit_rate and win_ratio >= 0.5: return 1
         return 0
 
-    df_adv['Bet_Multi_2t'] = df_adv.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合ROI'], x['Active_2t'], x['Plus_2t']), axis=1)
-    df_adv['Bet_Multi_2f'] = df_adv.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合2連複_ROI'], x['Active_2f'], x['Plus_2f']), axis=1)
-
-    # 辞書作成（Bet_Multiが1以上の「黄金条件」だけを登録）
-    dict_2t = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): row['Bet_Multi_2t'] for _, row in df_adv.iterrows() if row['Bet_Multi_2t'] > 0}
-    dict_2f = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): row['Bet_Multi_2f'] for _, row in df_adv.iterrows() if row['Bet_Multi_2f'] > 0}
+    # 🎯 2連単は「2連単の的中率データ」を渡し、足切りを【20.0%】に設定
+    df_adv['Bet_Multi_2t'] = df_adv.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合ROI'], x['Active_2t'], x['Plus_2t'], x['的中率_2連単'], 20.0), axis=1)
+    # 🛡️ 2連複は「2連複の的中率データ」を渡し、足切りを【30.0%】に設定
+    df_adv['Bet_Multi_2f'] = df_adv.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合2連複_ROI'], x['Active_2f'], x['Plus_2f'], x['的中率_2連複'], 30.0), axis=1)
     
     buys_2t = []
     buys_2f = []
