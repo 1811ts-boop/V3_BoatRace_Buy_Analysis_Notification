@@ -150,23 +150,24 @@ def fetch_weather_jma_and_om(place_id, target_time_str):
         url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=wind_speed_10m,wind_direction_10m,weather_code&timezone=Asia%2FTokyo&forecast_days=1&models=jma_seamless,best_match"
         
         success = False
-        # 💡 改善点2: 最大3回までリトライ（再試行）するループ
+        # 💡 改善点: より強力な「指数的バックオフ」とタイムアウト30秒の採用
         for attempt in range(3):
             try:
-                time.sleep(1.0) # サーバーへの配慮（1秒待機）
-                resp = requests.get(url, timeout=15) # タイムアウトは15秒で十分
+                # サーバーを休ませるため、失敗するごとに待機時間を長くする (初回1秒 → 2回目5秒 → 3回目10秒)
+                wait_time = 1.0 if attempt == 0 else 5.0 * attempt
+                time.sleep(wait_time)
+                
+                # 💡 ユーザー提案の採用: 相手の計算待ちを30秒まで許容する
+                resp = requests.get(url, timeout=30)
                 
                 if resp.status_code == 200:
-                    # 取得成功: 1日分の全データをキャッシュに保存
                     WEATHER_CACHE[cache_key_full] = resp.json()
                     success = True
-                    break # ループを抜ける
+                    break
                 else:
-                    logger.warning(f"⚠️ Open-Meteo 応答エラー (HTTP {resp.status_code})。再試行します({attempt+1}/3)...")
-                    time.sleep(2.0) # 失敗時は2秒待ってから再試行
+                    logger.warning(f"⚠️ Open-Meteo 応答エラー (HTTP {resp.status_code})。{wait_time}秒休ませて再試行します({attempt+1}/3)...")
             except Exception as e:
-                logger.warning(f"⚠️ 通信タイムアウト等 ({e})。再試行します({attempt+1}/3)...")
-                time.sleep(2.0)
+                logger.warning(f"⚠️ 通信遅延 ({e})。サーバー混雑のため {wait_time}秒休ませて再試行します({attempt+1}/3)...")
         
         if not success:
             logger.debug(f"JMA/OM 取得に3回連続で失敗しました。")
