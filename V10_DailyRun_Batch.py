@@ -124,29 +124,119 @@ def append_to_spreadsheet(values):
     except Exception as e:
         logger.error(f"❌ スプレッドシート書き込みエラー: {e}")
 
+# =============================================================================
+# V10 気象アンサンブル・パイプライン (JMAメイン構成)
+# =============================================================================
 WEATHER_CACHE = {}
-def fetch_weather(place_id, target_time_str):
-    if not OPENWEATHER_API_KEY: return 0.0, 0.0, 1 # フェイルセーフ
-    try:
-        hour = target_time_str.split(':')[0]
-        cache_key = f"{place_id}_{hour}" 
-        if cache_key in WEATHER_CACHE: return WEATHER_CACHE[cache_key]
 
-        hour_int, minute_int = map(int, target_time_str.split(':'))
-        now = TODAY_OBJ.replace(hour=hour_int, minute=minute_int, second=0, microsecond=0)
-        coords = PLACE_COORDS[place_id]
-        url = f"https://api.openweathermap.org/data/2.5/forecast?lat={coords['lat']}&lon={coords['lon']}&appid={OPENWEATHER_API_KEY}&units=metric"
-        res = requests.get(url).json()
-        closest = min(res.get('list', []), key=lambda x: abs(x['dt'] - int(now.timestamp())))
-        main = closest['weather'][0].get('main', 'Clear')
+def get_target_hour_index(target_time_str):
+    """レース締切時刻の『時(hour)』を抽出"""
+    try:
+        return int(target_time_str.split(':')[0])
+    except:
+        return 12 
+
+def fetch_weather_jma_and_om(place_id, target_time_str):
+    """①気象庁モデル(メイン) と ②Open-Meteo標準(サブ) を同時に取得"""
+    target_hour = get_target_hour_index(target_time_str)
+    cache_key = f"JMA_OM_{place_id}_{target_hour}"
+    if cache_key in WEATHER_CACHE: return WEATHER_CACHE[cache_key]
+
+    try:
+        # 既存の PLACE_COORDS を利用
+        lat = PLACE_COORDS[place_id]["lat"]
+        lon = PLACE_COORDS[place_id]["lon"]
         
-        ws = float(closest['wind'].get('speed', 0.0))
-        wd = float(closest['wind'].get('deg', 0.0))
-        wc = 1 if main == 'Clear' else 2 if main == 'Clouds' else 3
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=wind_speed_10m,wind_direction_10m,weather_code&timezone=Asia%2FTokyo&forecast_days=1&models=jma_seamless,best_match"
+        resp = requests.get(url, timeout=10)
+        data = resp.json()
         
-        WEATHER_CACHE[cache_key] = (ws, wd, wc)
-        return ws, wd, wc
-    except: return 0.0, 0.0, 1
+        # 気象庁モデル抽出 (km/h -> m/s)
+        jma_ws = round(data['hourly']['wind_speed_10m_jma_seamless'][target_hour] / 3.6, 2)
+        jma_wd = data['hourly']['wind_direction_10m_jma_seamless'][target_hour]
+        jma_wc = 1 if data['hourly']['weather_code_jma_seamless'][target_hour] < 3 else 2 if data['hourly']['weather_code_jma_seamless'][target_hour] < 50 else 3
+        
+        # Open-Meteo標準モデル抽出 (km/h -> m/s)
+        om_ws = round(data['hourly']['wind_speed_10m_best_match'][target_hour] / 3.6, 2)
+        om_wd = data['hourly']['wind_direction_10m_best_match'][target_hour]
+        
+        WEATHER_CACHE[cache_key] = (jma_ws, jma_wd, jma_wc, om_ws, om_wd)
+        return jma_ws, jma_wd, jma_wc, om_ws, om_wd
+    except Exception as e:
+        logger.debug(f"JMA/OM 取得失敗: {e}")
+        return None, None, None, None, None
+
+def fetch_weather_openweather(place_id, target_time_str):
+    """③OpenWeatherから取得 (バックアップ)"""
+    target_hour = get_target_hour_index(target_time_str)
+    cache_key = f"OW_{place_id}_{target_hour}"
+    if cache_key in WEATHER_CACHE: return WEATHER_CACHE[cache_key]
+
+    try:
+        if not OPENWEATHER_API_KEY: return None, None
+        lat = PLACE_COORDS[place_id]["lat"]
+        lon = PLACE_COORDS[place_id]["lon"]
+        url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={OPENWEATHER_API_KEY}&units=metric"
+        resp = requests.get(url, timeout=10)
+        data = resp.json()
+        
+        now = TODAY_OBJ.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+        closest = min(data.get('list', []), key=lambda x: abs(x['dt'] - int(now.timestamp())))
+        
+        ow_ws = round(closest['wind'].get('speed', 0.0), 2)
+        ow_wd = float(closest['wind'].get('deg', 0.0))
+        WEATHER_CACHE[cache_key] = (ow_ws, ow_wd)
+        return ow_ws, ow_wd
+    except Exception as e:
+        logger.debug(f"OpenWeather 取得失敗: {e}")
+        return None, None
+
+def get_ensemble_weather(place_id, target_time_str):
+    """カスケードアンサンブル判定ロジック（詳細ログ出力付き）"""
+    place_name = JCD_MAP.get(f"{place_id:02d}", "不明")
+    target_hour = get_target_hour_index(target_time_str)
+    
+    # 同一時間・同一場での「ログの重複出力」を防ぐためのキー
+    cache_key_log = f"LOG_{place_id}_{target_hour}"
+    should_log = cache_key_log not in WEATHER_CACHE
+    
+    if should_log:
+        logger.info(f"--- 🌤️ {place_name} ({target_time_str}) の気象データ取得 ---")
+        WEATHER_CACHE[cache_key_log] = True # ログ出力済みフラグを立てる
+
+    # ① メインAPI（JMA局地モデル ＆ Open-Meteo標準モデル）を取得
+    jma_ws, jma_wd, jma_wc, om_ws, om_wd = fetch_weather_jma_and_om(place_id, target_time_str)
+    
+    # 【パターン1】気象庁(JMA) & Open-Meteo(OM) 正常稼働時
+    if jma_ws is not None and om_ws is not None:
+        if should_log:
+            logger.info("✅ [メインAPI] 気象庁(JMA)局地モデル ＆ Open-Meteo標準モデル の取得に成功。")
+            diff = abs(jma_ws - om_ws)
+            logger.info(f"📊 比較: JMA={jma_ws}m, OM={om_ws}m (差分: {diff:.1f}m)")
+            if diff > 3.0:
+                logger.warning(f"🚨 予報乖離エラー: ズレが3mを超えています。レースをスキップします。")
+        
+        # 乖離が3m以上の場合は見送り（False）を返す
+        if abs(jma_ws - om_ws) > 3.0:
+            return None, None, None, False 
+        return jma_ws, jma_wd, jma_wc, True
+        
+    # 【パターン2】メインAPIサーバー異常時、OpenWeatherへフォールバック
+    if should_log:
+        logger.warning("⚠️ JMA/OMの取得に失敗しました。代替の OpenWeather に切り替えます。")
+        
+    ow_ws, ow_wd = fetch_weather_openweather(place_id, target_time_str)
+    
+    if ow_ws is not None:
+        if should_log:
+            logger.info(f"✅ [代替API] OpenWeatherからのデータ取得に成功 (風速: {ow_ws}m)。")
+            logger.info("⚠️ サブ(OM)がダウンしているため、比較チェックは行わず単独で進行します。")
+        return ow_ws, ow_wd, 2, True # 天気コードは適当に曇り(2)を補完して進行
+        
+    # 【パターン3】全API異常時（ネットワーク遮断など）
+    if should_log:
+        logger.error("❌ 全ての気象APIがダウン、またはデータが欠損しています。フェイルセーフ(風速0m)で強行します。")
+    return 0.0, 0.0, 1, True
 
 # =============================================================================
 # 3. V9 最新ハードウェア辞書の動的生成
@@ -348,7 +438,16 @@ def transform_for_v9_inference(df_raw, df_tide, dict_motor, dict_boat):
             continue
 
         sched = str(row.get('Scheduled_Time', '12:00'))
-        ws, wd, wc = fetch_weather(pid, sched)
+        
+        # 💡 アンサンブル気象判定を実行 (pidをそのまま渡す)
+        ws, wd, wc, is_stable = get_ensemble_weather(pid, sched)
+        
+        # 気象予報が不安定（乖離が3m以上）なレースは、特徴量リストから除外して推論させない
+        if not is_stable:
+            place_name = JCD_MAP.get(f"{pid:02d}", "不明")
+            logger.info(f"⏭️ {place_name} {rnum}R は気象予報の不確実性が高いため、推論を見送ります。")
+            continue 
+
         ta = TRACK_ANGLES.get(pid, 0.0)
         tw = round(ws * math.cos(math.radians((wd + 180) - ta)), 2)
         cw = round(ws * math.sin(math.radians((wd + 180) - ta)), 2)
@@ -676,8 +775,8 @@ def run_v10_inference_and_notify(df_s1, df_s2):
         rank_str = f"{b['multi']}倍"
         quant_bet = b['multi'] * 100
         
-        # 気象データを取得して風向きを文字に変換
-        ws, wd, wc = fetch_weather(b['p'], b['time'])
+        # 💡 アンサンブル気象データをキャッシュから即座に取得
+        ws, wd, wc, _ = get_ensemble_weather(b['p'], b['time'])
         wind_dir_str = "北" if (315 <= wd or wd < 45) else "東" if (45 <= wd < 135) else "南" if (135 <= wd < 225) else "西"
         
         # A〜R列の順番に合わせたリスト作成（結果・配当・収支の列は "" で空けておく）
