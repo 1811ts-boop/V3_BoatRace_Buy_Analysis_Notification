@@ -56,6 +56,10 @@ PLACE_COORDS = {1: {"lat": 36.39, "lon": 139.30}, 2: {"lat": 35.82, "lon": 139.6
 TRACK_ANGLES = {1: 163.6, 2: 101.6, 3: 17.8, 4: 355.6, 5: 273.4, 6: 187.0, 7: 243.7, 8: 271.3, 9: 282.1, 10: 152.9, 11: 192.5, 12: 186.1, 13: 250.5, 14: 109.5, 15: 333.3, 16: 181.1, 17: 228.7, 18: 299.0, 19: 222.8, 20: 244.1, 21: 90.9, 22: 68.1, 23: 212.4, 24: 50.6}
 COURSE_TYPE_MAP = {24: 1, 18: 1, 21: 1, 19: 1, 13: 1, 10: 1, 5: 2, 6: 2, 7: 2, 8: 2, 9: 2, 1: 2, 12: 3, 15: 3, 16: 3, 17: 3, 20: 3, 23: 3, 2: 4, 4: 4, 14: 4, 11: 4, 22: 4, 3: 5}
 
+# 💡 V10用追加: 安定したAPI通信のためのセッション（Chromeブラウザに偽装）
+HTTP_SESSION = requests.Session()
+HTTP_SESSION.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
+
 # =============================================================================
 # 2. Google Drive & API連携 (V7継承)
 # =============================================================================
@@ -150,15 +154,13 @@ def fetch_weather_jma_and_om(place_id, target_time_str):
         url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=wind_speed_10m,wind_direction_10m,weather_code&timezone=Asia%2FTokyo&forecast_days=1&models=jma_seamless,best_match"
         
         success = False
-        # 💡 改善点: より強力な「指数的バックオフ」とタイムアウト30秒の採用
         for attempt in range(3):
             try:
-                # サーバーを休ませるため、失敗するごとに待機時間を長くする (初回1秒 → 2回目5秒 → 3回目10秒)
                 wait_time = 1.0 if attempt == 0 else 5.0 * attempt
                 time.sleep(wait_time)
                 
-                # 💡 ユーザー提案の採用: 相手の計算待ちを30秒まで許容する
-                resp = requests.get(url, timeout=30)
+                # 💡 修正: requests.get ではなく HTTP_SESSION.get を使う
+                resp = HTTP_SESSION.get(url, timeout=20)
                 
                 if resp.status_code == 200:
                     WEATHER_CACHE[cache_key_full] = resp.json()
@@ -199,7 +201,9 @@ def fetch_weather_openweather(place_id, target_time_str):
         lat = PLACE_COORDS[place_id]["lat"]
         lon = PLACE_COORDS[place_id]["lon"]
         url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={OPENWEATHER_API_KEY}&units=metric"
-        resp = requests.get(url, timeout=10)
+        
+        # 💡 修正: requests.get ではなく HTTP_SESSION.get を使う
+        resp = HTTP_SESSION.get(url, timeout=20)
         data = resp.json()
         
         now = TODAY_OBJ.replace(hour=target_hour, minute=0, second=0, microsecond=0)
