@@ -137,33 +137,54 @@ def get_target_hour_index(target_time_str):
         return 12 
 
 def fetch_weather_jma_and_om(place_id, target_time_str):
-    """①気象庁モデル(メイン) と ②Open-Meteo標準(サブ) を同時に取得"""
+    """①気象庁モデル(メイン) と ②Open-Meteo標準(サブ) を同時に取得 (一括キャッシュ＆リトライ機能付き)"""
     target_hour = get_target_hour_index(target_time_str)
-    cache_key = f"JMA_OM_{place_id}_{target_hour}"
-    if cache_key in WEATHER_CACHE: return WEATHER_CACHE[cache_key]
-
-    try:
-        # 既存の PLACE_COORDS を利用
+    
+    # 💡 改善点1: 時間ごとではなく「場ごと」に1日分の丸ごとデータをキャッシュする
+    cache_key_full = f"JMA_OM_FULL_{place_id}"
+    
+    # キャッシュに無い場合のみ、APIにリクエストを送る
+    if cache_key_full not in WEATHER_CACHE:
         lat = PLACE_COORDS[place_id]["lat"]
         lon = PLACE_COORDS[place_id]["lon"]
-        
         url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=wind_speed_10m,wind_direction_10m,weather_code&timezone=Asia%2FTokyo&forecast_days=1&models=jma_seamless,best_match"
-        resp = requests.get(url, timeout=10)
-        data = resp.json()
         
-        # 気象庁モデル抽出 (km/h -> m/s)
+        success = False
+        # 💡 改善点2: 最大3回までリトライ（再試行）するループ
+        for attempt in range(3):
+            try:
+                time.sleep(1.0) # サーバーへの配慮（1秒待機）
+                resp = requests.get(url, timeout=15) # タイムアウトは15秒で十分
+                
+                if resp.status_code == 200:
+                    # 取得成功: 1日分の全データをキャッシュに保存
+                    WEATHER_CACHE[cache_key_full] = resp.json()
+                    success = True
+                    break # ループを抜ける
+                else:
+                    logger.warning(f"⚠️ Open-Meteo 応答エラー (HTTP {resp.status_code})。再試行します({attempt+1}/3)...")
+                    time.sleep(2.0) # 失敗時は2秒待ってから再試行
+            except Exception as e:
+                logger.warning(f"⚠️ 通信タイムアウト等 ({e})。再試行します({attempt+1}/3)...")
+                time.sleep(2.0)
+        
+        if not success:
+            logger.debug(f"JMA/OM 取得に3回連続で失敗しました。")
+            return None, None, None, None, None
+
+    # キャッシュされた1日分のデータから、必要な時間（target_hour）のデータだけを抜き出す
+    data = WEATHER_CACHE[cache_key_full]
+    try:
         jma_ws = round(data['hourly']['wind_speed_10m_jma_seamless'][target_hour] / 3.6, 2)
         jma_wd = data['hourly']['wind_direction_10m_jma_seamless'][target_hour]
         jma_wc = 1 if data['hourly']['weather_code_jma_seamless'][target_hour] < 3 else 2 if data['hourly']['weather_code_jma_seamless'][target_hour] < 50 else 3
         
-        # Open-Meteo標準モデル抽出 (km/h -> m/s)
         om_ws = round(data['hourly']['wind_speed_10m_best_match'][target_hour] / 3.6, 2)
         om_wd = data['hourly']['wind_direction_10m_best_match'][target_hour]
         
-        WEATHER_CACHE[cache_key] = (jma_ws, jma_wd, jma_wc, om_ws, om_wd)
         return jma_ws, jma_wd, jma_wc, om_ws, om_wd
     except Exception as e:
-        logger.debug(f"JMA/OM 取得失敗: {e}")
+        logger.debug(f"JMA/OM データ抽出エラー: {e}")
         return None, None, None, None, None
 
 def fetch_weather_openweather(place_id, target_time_str):
