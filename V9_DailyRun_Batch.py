@@ -54,6 +54,23 @@ PLACE_COORDS = {1: {"lat": 36.39, "lon": 139.30}, 2: {"lat": 35.82, "lon": 139.6
 TRACK_ANGLES = {1: 163.6, 2: 101.6, 3: 17.8, 4: 355.6, 5: 273.4, 6: 187.0, 7: 243.7, 8: 271.3, 9: 282.1, 10: 152.9, 11: 192.5, 12: 186.1, 13: 250.5, 14: 109.5, 15: 333.3, 16: 181.1, 17: 228.7, 18: 299.0, 19: 222.8, 20: 244.1, 21: 90.9, 22: 68.1, 23: 212.4, 24: 50.6}
 COURSE_TYPE_MAP = {24: 1, 18: 1, 21: 1, 19: 1, 13: 1, 10: 1, 5: 2, 6: 2, 7: 2, 8: 2, 9: 2, 1: 2, 12: 3, 15: 3, 16: 3, 17: 3, 20: 3, 23: 3, 2: 4, 4: 4, 14: 4, 11: 4, 22: 4, 3: 5}
 
+# 💡 ここから追加：各ボートレース場の緯度経度データ（Open-Meteo / OpenWeather用）
+PLACE_GEO_MAP = {
+    "桐生": {"lat": 36.40, "lon": 139.30}, "戸田": {"lat": 35.80, "lon": 139.66},
+    "江戸川": {"lat": 35.68, "lon": 139.86}, "平和島": {"lat": 35.58, "lon": 139.74},
+    "多摩川": {"lat": 35.65, "lon": 139.51}, "浜名湖": {"lat": 34.69, "lon": 137.56},
+    "蒲郡": {"lat": 34.81, "lon": 137.21}, "常滑": {"lat": 34.88, "lon": 136.83},
+    "津": {"lat": 34.70, "lon": 136.52}, "三国": {"lat": 36.21, "lon": 136.16},
+    "びわこ": {"lat": 35.01, "lon": 135.85}, "住之江": {"lat": 34.60, "lon": 135.47},
+    "尼崎": {"lat": 34.71, "lon": 135.40}, "鳴門": {"lat": 34.20, "lon": 134.60},
+    "丸亀": {"lat": 34.29, "lon": 133.79}, "児島": {"lat": 34.45, "lon": 133.80},
+    "宮島": {"lat": 34.30, "lon": 132.30}, "徳山": {"lat": 34.03, "lon": 131.81},
+    "下関": {"lat": 33.99, "lon": 131.97}, "若松": {"lat": 33.89, "lon": 130.74},
+    "芦屋": {"lat": 33.88, "lon": 130.66}, "福岡": {"lat": 33.60, "lon": 130.39},
+    "唐津": {"lat": 33.43, "lon": 129.98}, "大村": {"lat": 32.89, "lon": 129.95},
+}
+# 💡 追加ここまで
+
 # =============================================================================
 # 2. Google Drive & API連携 (V7継承)
 # =============================================================================
@@ -120,28 +137,81 @@ def append_to_spreadsheet(values):
         logger.error(f"❌ スプレッドシート書き込みエラー: {e}")
 
 WEATHER_CACHE = {}
-def fetch_weather(place_id, target_time_str):
-    if not OPENWEATHER_API_KEY: return 0.0, 0.0, 1 # フェイルセーフ
-    try:
-        hour = target_time_str.split(':')[0]
-        cache_key = f"{place_id}_{hour}" 
-        if cache_key in WEATHER_CACHE: return WEATHER_CACHE[cache_key]
 
-        hour_int, minute_int = map(int, target_time_str.split(':'))
-        now = TODAY_OBJ.replace(hour=hour_int, minute=minute_int, second=0, microsecond=0)
-        coords = PLACE_COORDS[place_id]
-        url = f"https://api.openweathermap.org/data/2.5/forecast?lat={coords['lat']}&lon={coords['lon']}&appid={OPENWEATHER_API_KEY}&units=metric"
-        res = requests.get(url).json()
-        closest = min(res.get('list', []), key=lambda x: abs(x['dt'] - int(now.timestamp())))
-        main = closest['weather'][0].get('main', 'Clear')
-        
-        ws = float(closest['wind'].get('speed', 0.0))
-        wd = float(closest['wind'].get('deg', 0.0))
-        wc = 1 if main == 'Clear' else 2 if main == 'Clouds' else 3
-        
-        WEATHER_CACHE[cache_key] = (ws, wd, wc)
+def fetch_weather_open_meteo(place_name, target_time_str):
+    try:
+        lat, lon = PLACE_GEO_MAP[place_name]["lat"], PLACE_GEO_MAP[place_name]["lon"]
+        # 💡 weather_codeを取得してV9の特徴量に合わせる処理を追加
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=wind_speed_10m,wind_direction_10m,weather_code&timezone=Asia%2FTokyo&forecast_days=1"
+        resp = requests.get(url, timeout=5)
+        data = resp.json()
+        target_hour = int(target_time_str.split(':')[0])
+        ws = round(data['hourly']['wind_speed_10m'][target_hour] / 3.6, 2)
+        wd = data['hourly']['wind_direction_10m'][target_hour]
+        wmo = data['hourly']['weather_code'][target_hour]
+        # WMOコードをV9のWeather_Code(1:晴れ, 2:曇り, 3:雨雪)に変換
+        wc = 1 if wmo == 0 else 2 if wmo in [1, 2, 3] else 3
         return ws, wd, wc
-    except: return 0.0, 0.0, 1
+    except Exception as e:
+        logger.error(f"❌ Open-Meteoエラー: {e}")
+        return None, None, None
+
+def fetch_weather_openweather(place_name, target_time_str):
+    try:
+        if not OPENWEATHER_API_KEY: return None, None, None
+        lat, lon = PLACE_GEO_MAP[place_name]["lat"], PLACE_GEO_MAP[place_name]["lon"]
+        url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={OPENWEATHER_API_KEY}&units=metric"
+        resp = requests.get(url, timeout=5)
+        data = resp.json()
+        forecast = data['list'][0]
+        ws = round(forecast['wind']['speed'], 2)
+        wd = forecast['wind']['deg']
+        main = forecast['weather'][0].get('main', 'Clear')
+        wc = 1 if main == 'Clear' else 2 if main == 'Clouds' else 3
+        return ws, wd, wc
+    except Exception as e:
+        logger.error(f"❌ OpenWeatherエラー: {e}")
+        return None, None, None
+
+def get_ensemble_weather(place_id_or_name, target_time_str):
+    # int(PlaceID)とstr(場名)のどちらが渡されても対応できる柔軟な設計
+    if isinstance(place_id_or_name, (int, float)) or str(place_id_or_name).isdigit():
+        place_name = JCD_MAP.get(f"{int(place_id_or_name):02d}", "不明")
+    else:
+        place_name = place_id_or_name
+
+    hour = target_time_str.split(':')[0]
+    cache_key = f"{place_name}_{hour}"
+    if cache_key in WEATHER_CACHE:
+        return WEATHER_CACHE[cache_key]
+
+    logger.info(f"--- 🌤️ {place_name} ({target_time_str}) の気象データ取得 ---")
+    om_ws, om_wd, om_wc = fetch_weather_open_meteo(place_name, target_time_str)
+    ow_ws, ow_wd, ow_wc = fetch_weather_openweather(place_name, target_time_str)
+    
+    ws, wd, wc, is_stable = 0.0, 0.0, 1, True
+
+    if om_ws is not None and ow_ws is not None:
+        diff = abs(om_ws - ow_ws)
+        logger.info(f"📊 比較: メイン(OM)={om_ws}m, サブ(OW)={ow_ws}m (差分: {diff:.1f}m)")
+        if diff > 3.0:
+            logger.warning(f"🚨 予報乖離エラー: ズレが3mを超えています（スキップ対象）")
+            ws, wd, wc, is_stable = om_ws, om_wd, om_wc, False
+        else:
+            logger.info("✅ 予報一致。メイン(OM)のデータを採用します。")
+            ws, wd, wc, is_stable = om_ws, om_wd, om_wc, True
+    elif om_ws is not None:
+        logger.info("⚠️ サブ(OW)取得失敗。メイン(OM)単独で進行します。")
+        ws, wd, wc, is_stable = om_ws, om_wd, om_wc, True
+    elif ow_ws is not None:
+        logger.info("⚠️ メイン(OM)取得失敗。サブ(OW)単独で進行します。")
+        ws, wd, wc, is_stable = ow_ws, ow_wd, ow_wc, True
+    else:
+        logger.error("❌ 全ての気象APIがダウンしています。")
+        ws, wd, wc, is_stable = 0.0, 0.0, 1, True
+
+    WEATHER_CACHE[cache_key] = (ws, wd, wc, is_stable)
+    return ws, wd, wc, is_stable
 
 # =============================================================================
 # 3. V9 最新ハードウェア辞書の動的生成
@@ -343,7 +413,7 @@ def transform_for_v9_inference(df_raw, df_tide, dict_motor, dict_boat):
             continue
 
         sched = str(row.get('Scheduled_Time', '12:00'))
-        ws, wd, wc = fetch_weather(pid, sched)
+        ws, wd, wc, _ = get_ensemble_weather(pid, sched) # 💡 ここを変更
         ta = TRACK_ANGLES.get(pid, 0.0)
         tw = round(ws * math.cos(math.radians((wd + 180) - ta)), 2)
         cw = round(ws * math.sin(math.radians((wd + 180) - ta)), 2)
@@ -478,10 +548,12 @@ def run_v9_inference_and_notify(df_s1, df_s2):
         if races >= 10 and roi >= 105 and hit_rate >= min_hit_rate and win_ratio >= 0.5: return 1
         return 0
 
-    # 🎯 2連単は「2連単の的中率データ」を渡し、足切りを【20.0%】に設定
     df_adv['Bet_Multi_2t'] = df_adv.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合ROI'], x['Active_2t'], x['Plus_2t'], x['的中率_2連単'], 20.0), axis=1)
-    # 🛡️ 2連複は「2連複の的中率データ」を渡し、足切りを【30.0%】に設定
     df_adv['Bet_Multi_2f'] = df_adv.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合2連複_ROI'], x['Active_2f'], x['Plus_2f'], x['的中率_2連複'], 30.0), axis=1)
+    
+    # 💡【修正】お送りいただいたコードでこの2行が抜け落ちていました！追加してください。
+    dict_2t = {(r['Month'], r['Project_ID'], r['場名'], r['Rough_Category']): r['Bet_Multi_2t'] for _, r in df_adv.iterrows()}
+    dict_2f = {(r['Month'], r['Project_ID'], r['場名'], r['Rough_Category']): r['Bet_Multi_2f'] for _, r in df_adv.iterrows()}
     
     buys_2t = []
     buys_2f = []
@@ -566,6 +638,12 @@ def run_v9_inference_and_notify(df_s1, df_s2):
                 sched_time = r_info['Scheduled_Time']
                 cat = get_rough_cat(r_info['Stage1_Rough_Prob'])
 
+                # 💡【追加】ここでアンサンブル判定を呼び出し、天候がカオスならスキップ
+                ws, wd, wc, is_stable = get_ensemble_weather(plid, sched_time)
+                if not is_stable:
+                    logger.info(f"⏭️ スキップ実行: {place_name} {rnum}R (天候カオス状態のため)")
+                    continue
+
                 scores = {int(r['Boat_Number']): float(r['Pred_Score']) for _, r in grp.iterrows()}
                 p_2tan, p_2fuku = calculate_probabilities(scores)
                 
@@ -644,8 +722,8 @@ def run_v9_inference_and_notify(df_s1, df_s2):
         rank_str = f"{b['multi']}倍"
         quant_bet = b['multi'] * 100
         
-        # 気象データを取得して風向きを文字に変換
-        ws, wd, wc = fetch_weather(b['p'], b['time'])
+        # 💡 アンサンブル気象データをキャッシュから即座に取得
+        ws, wd, wc, _ = get_ensemble_weather(b['p'], b['time'])
         wind_dir_str = "北" if (315 <= wd or wd < 45) else "東" if (45 <= wd < 135) else "南" if (135 <= wd < 225) else "西"
         
         # A〜R列の順番に合わせたリスト作成（結果・配当・収支の列は "" で空けておく）
