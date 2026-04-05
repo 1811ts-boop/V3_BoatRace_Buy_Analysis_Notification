@@ -570,11 +570,28 @@ def run_v10_inference_and_notify(df_s1, df_s2):
         except:
             return 0, 0
             
+    # PlusとActiveの計算
     df_port_2t[['Plus', 'Active']] = pd.DataFrame(df_port_2t['OOS_プラス年数(24~26年)'].apply(parse_plus_yrs).tolist(), index=df_port_2t.index)
-    df_port_2t = df_port_2t[(df_port_2t['OOS(未知)_統合レース数'] >= 15) & (df_port_2t['OOS(未知)_統合ROI'] >= 105) & (df_port_2t['Active'] >= 2) & (df_port_2t['Plus'] >= 2)]
-    
     df_port_2f[['Plus', 'Active']] = pd.DataFrame(df_port_2f['OOS_2連複_プラス年数(24~26年)'].apply(parse_plus_yrs).tolist(), index=df_port_2f.index)
-    df_port_2f = df_port_2f[(df_port_2f['OOS(未知)_統合レース数'] >= 15) & (df_port_2f['OOS(未知)_統合2連複_ROI'] >= 105) & (df_port_2f['Active'] >= 2) & (df_port_2f['Plus'] >= 2)]
+
+    # --- 🎯 本番用抽出フィルター ---
+    df_port_2t = df_port_2t[
+        (df_port_2t['Train(過去)_レース数'] >= 10) &    # 追加: 過去に最低10回は経験していること
+        (df_port_2t['Train(過去)_ROI'] >= 75.0) &       # 追加: ランダムベット(75%)以下の劣悪なノイズを除外
+        (df_port_2t['OOS(未知)_統合レース数'] >= 15) & 
+        (df_port_2t['OOS(未知)_統合ROI'] >= 105.0) & 
+        (df_port_2t['Active'] >= 2) & 
+        (df_port_2t['Plus'] >= 2)
+    ]
+    
+    df_port_2f = df_port_2f[
+        (df_port_2f['Train(過去)_レース数'] >= 10) & 
+        (df_port_2f['Train(過去)_2連複_ROI'] >= 75.0) & # 追加: ランダムベット(75%)以下の劣悪なノイズを除外
+        (df_port_2f['OOS(未知)_統合レース数'] >= 15) & 
+        (df_port_2f['OOS(未知)_統合2連複_ROI'] >= 105.0) & 
+        (df_port_2f['Active'] >= 2) & 
+        (df_port_2f['Plus'] >= 2)
+    ]
     
     # --- 💰 資金プッシュ度（ケリー基準）の自動判定ロジック ---
     def get_bet_multiplier(races, roi, active, plus):
