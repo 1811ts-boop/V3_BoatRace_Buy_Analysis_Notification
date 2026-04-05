@@ -550,11 +550,7 @@ def run_v9_inference_and_notify(df_s1, df_s2):
 
     df_adv['Bet_Multi_2t'] = df_adv.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合ROI'], x['Active_2t'], x['Plus_2t'], x['的中率_2連単'], 20.0), axis=1)
     df_adv['Bet_Multi_2f'] = df_adv.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合2連複_ROI'], x['Active_2f'], x['Plus_2f'], x['的中率_2連複'], 30.0), axis=1)
-    
-    # 💡【修正】お送りいただいたコードでこの2行が抜け落ちていました！追加してください。
-    dict_2t = {(r['Month'], r['Project_ID'], r['場名'], r['Rough_Category']): r['Bet_Multi_2t'] for _, r in df_adv.iterrows()}
-    dict_2f = {(r['Month'], r['Project_ID'], r['場名'], r['Rough_Category']): r['Bet_Multi_2f'] for _, r in df_adv.iterrows()}
-    
+        
     buys_2t = []
     buys_2f = []
     debug_logs = {}
