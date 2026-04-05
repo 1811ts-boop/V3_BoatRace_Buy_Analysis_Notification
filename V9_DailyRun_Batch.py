@@ -216,7 +216,8 @@ def fetch_weather_openweather(place_name, target_time_str):
     except:
         return None, None, None
 
-def get_ensemble_weather(place_id_or_name, target_time_str):
+def get_weather(place_id_or_name, target_time_str):
+    """【気象庁(OM)メイン・OW代替フェイルセーフ版】"""
     if isinstance(place_id_or_name, (int, float)) or str(place_id_or_name).isdigit():
         place_name = JCD_MAP.get(f"{int(place_id_or_name):02d}", "不明")
     else:
@@ -228,32 +229,24 @@ def get_ensemble_weather(place_id_or_name, target_time_str):
         return WEATHER_CACHE[cache_key]
 
     logger.info(f"--- 🌤️ {place_name} ({target_time_str}) の気象データ取得 ---")
-    om_ws, om_wd, om_wc = fetch_weather_open_meteo(place_name, target_time_str)
-    ow_ws, ow_wd, ow_wc = fetch_weather_openweather(place_name, target_time_str)
     
-    ws, wd, wc, is_stable = 0.0, 0.0, 1, True
-
-    if om_ws is not None and ow_ws is not None:
-        diff = abs(om_ws - ow_ws)
-        logger.info(f"📊 比較: メイン(OM)={om_ws}m, サブ(OW)={ow_ws}m (差分: {diff:.1f}m)")
-        if diff > 3.0:
-            logger.warning(f"🚨 予報乖離エラー: ズレが3mを超えています（スキップ対象）")
-            ws, wd, wc, is_stable = om_ws, om_wd, om_wc, False
-        else:
-            logger.info("✅ 予報一致。メイン(OM)のデータを採用します。")
-            ws, wd, wc, is_stable = om_ws, om_wd, om_wc, True
-    elif om_ws is not None:
-        logger.info("⚠️ サブ(OW)取得失敗。メイン(OM)単独で進行します。")
-        ws, wd, wc, is_stable = om_ws, om_wd, om_wc, True
-    elif ow_ws is not None:
-        logger.info("⚠️ メイン(OM)取得失敗。サブ(OW)単独で進行します。")
-        ws, wd, wc, is_stable = ow_ws, ow_wd, ow_wc, True
+    # 1. まず気象庁データ(Open-Meteo)を取得
+    ws, wd, wc = fetch_weather_open_meteo(place_name, target_time_str)
+    
+    # 2. 成功したらそれを採用。失敗した時「のみ」OpenWeatherを取得
+    if ws is not None:
+        logger.info("✅ 気象庁(OM)のデータを取得しました。")
     else:
-        logger.error("❌ 全ての気象APIがダウンしています。")
-        ws, wd, wc, is_stable = 0.0, 0.0, 1, True
+        logger.warning("⚠️ 気象庁(OM)の取得に失敗。代替としてOpenWeatherを取得します。")
+        ws, wd, wc = fetch_weather_openweather(place_name, target_time_str)
+        if ws is not None:
+            logger.info("✅ 代替データ(OW)を取得しました。")
+        else:
+            logger.error("❌ 全ての気象APIがダウンしています。")
+            ws, wd, wc = 0.0, 0.0, 1
 
-    WEATHER_CACHE[cache_key] = (ws, wd, wc, is_stable)
-    return ws, wd, wc, is_stable
+    WEATHER_CACHE[cache_key] = (ws, wd, wc)
+    return ws, wd, wc
 
 # =============================================================================
 # 3. V9 最新ハードウェア辞書の動的生成
@@ -455,7 +448,7 @@ def transform_for_v9_inference(df_raw, df_tide, dict_motor, dict_boat):
             continue
 
         sched = str(row.get('Scheduled_Time', '12:00'))
-        ws, wd, wc, _ = get_ensemble_weather(pid, sched) # 💡 ここを変更
+        ws, wd, wc = get_weather(pid, sched) # 💡 新しい関数名に変更。アンダーバー(_)も削除
         ta = TRACK_ANGLES.get(pid, 0.0)
         tw = round(ws * math.cos(math.radians((wd + 180) - ta)), 2)
         cw = round(ws * math.sin(math.radians((wd + 180) - ta)), 2)
@@ -680,12 +673,6 @@ def run_v9_inference_and_notify(df_s1, df_s2):
                 sched_time = r_info['Scheduled_Time']
                 cat = get_rough_cat(r_info['Stage1_Rough_Prob'])
 
-                # 💡【追加】ここでアンサンブル判定を呼び出し、天候がカオスならスキップ
-                ws, wd, wc, is_stable = get_ensemble_weather(plid, sched_time)
-                if not is_stable:
-                    logger.info(f"⏭️ スキップ実行: {place_name} {rnum}R (天候カオス状態のため)")
-                    continue
-
                 scores = {int(r['Boat_Number']): float(r['Pred_Score']) for _, r in grp.iterrows()}
                 p_2tan, p_2fuku = calculate_probabilities(scores)
                 
@@ -764,8 +751,8 @@ def run_v9_inference_and_notify(df_s1, df_s2):
         rank_str = f"{b['multi']}倍"
         quant_bet = b['multi'] * 100
         
-        # 💡 アンサンブル気象データをキャッシュから即座に取得
-        ws, wd, wc, _ = get_ensemble_weather(b['p'], b['time'])
+        # 💡 気象データをキャッシュから即座に取得
+        ws, wd, wc = get_weather(b['p'], b['time'])
         wind_dir_str = "北" if (315 <= wd or wd < 45) else "東" if (45 <= wd < 135) else "南" if (135 <= wd < 225) else "西"
         
         # A〜R列の順番に合わせたリスト作成（結果・配当・収支の列は "" で空けておく）
