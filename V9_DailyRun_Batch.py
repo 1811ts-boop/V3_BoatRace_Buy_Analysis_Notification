@@ -136,45 +136,87 @@ def append_to_spreadsheet(values):
     except Exception as e:
         logger.error(f"❌ スプレッドシート書き込みエラー: {e}")
 
+# APIのレスポンスを「場ごと」に丸ごと記憶する最強のキャッシュ
+API_CACHE_OM = {}
+API_CACHE_OW = {}
 WEATHER_CACHE = {}
 
 def fetch_weather_open_meteo(place_name, target_time_str):
-    try:
+    if place_name not in API_CACHE_OM:
         lat, lon = PLACE_GEO_MAP[place_name]["lat"], PLACE_GEO_MAP[place_name]["lon"]
-        # 💡 weather_codeを取得してV9の特徴量に合わせる処理を追加
         url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=wind_speed_10m,wind_direction_10m,weather_code&timezone=Asia%2FTokyo&forecast_days=1"
-        resp = requests.get(url, timeout=5)
-        data = resp.json()
+        
+        # 💡 ここが「しぶといリトライ」ロジック（最大3回挑戦）
+        success = False
+        for attempt in range(3):
+            try:
+                # タイムアウトも10秒に少し余裕を持たせる
+                resp = requests.get(url, timeout=10)
+                if resp.status_code == 200:
+                    API_CACHE_OM[place_name] = resp.json()
+                    success = True
+                    break # 成功したらループを抜ける
+            except Exception as e:
+                logger.warning(f"⚠️ Open-Meteo通信タイムアウト (リトライ {attempt+1}/3): {e}")
+                time.sleep(2) # 2秒待ってから再アタック
+        
+        if not success:
+            logger.error(f"❌ Open-Meteo通信エラー: 3回リトライしましたが取得できませんでした。")
+            API_CACHE_OM[place_name] = None
+            
+    data = API_CACHE_OM[place_name]
+    if not data: return None, None, None
+    
+    # 記憶したデータから、必要な時間の数値だけを抜き出す
+    try:
         target_hour = int(target_time_str.split(':')[0])
         ws = round(data['hourly']['wind_speed_10m'][target_hour] / 3.6, 2)
         wd = data['hourly']['wind_direction_10m'][target_hour]
         wmo = data['hourly']['weather_code'][target_hour]
-        # WMOコードをV9のWeather_Code(1:晴れ, 2:曇り, 3:雨雪)に変換
         wc = 1 if wmo == 0 else 2 if wmo in [1, 2, 3] else 3
         return ws, wd, wc
-    except Exception as e:
-        logger.error(f"❌ Open-Meteoエラー: {e}")
+    except:
         return None, None, None
 
 def fetch_weather_openweather(place_name, target_time_str):
+    if place_name not in API_CACHE_OW:
+        if not OPENWEATHER_API_KEY: 
+            API_CACHE_OW[place_name] = None
+        else:
+            lat, lon = PLACE_GEO_MAP[place_name]["lat"], PLACE_GEO_MAP[place_name]["lon"]
+            url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={OPENWEATHER_API_KEY}&units=metric"
+            
+            # 💡 こちらも最大3回しぶとくリトライ
+            success = False
+            for attempt in range(3):
+                try:
+                    resp = requests.get(url, timeout=10)
+                    if resp.status_code == 200:
+                        API_CACHE_OW[place_name] = resp.json()
+                        success = True
+                        break
+                except Exception as e:
+                    logger.warning(f"⚠️ OpenWeather通信タイムアウト (リトライ {attempt+1}/3): {e}")
+                    time.sleep(2)
+            
+            if not success:
+                logger.error(f"❌ OpenWeather通信エラー: 3回リトライしましたが取得できませんでした。")
+                API_CACHE_OW[place_name] = None
+            
+    data = API_CACHE_OW[place_name]
+    if not data: return None, None, None
+    
     try:
-        if not OPENWEATHER_API_KEY: return None, None, None
-        lat, lon = PLACE_GEO_MAP[place_name]["lat"], PLACE_GEO_MAP[place_name]["lon"]
-        url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={OPENWEATHER_API_KEY}&units=metric"
-        resp = requests.get(url, timeout=5)
-        data = resp.json()
         forecast = data['list'][0]
         ws = round(forecast['wind']['speed'], 2)
         wd = forecast['wind']['deg']
         main = forecast['weather'][0].get('main', 'Clear')
         wc = 1 if main == 'Clear' else 2 if main == 'Clouds' else 3
         return ws, wd, wc
-    except Exception as e:
-        logger.error(f"❌ OpenWeatherエラー: {e}")
+    except:
         return None, None, None
 
 def get_ensemble_weather(place_id_or_name, target_time_str):
-    # int(PlaceID)とstr(場名)のどちらが渡されても対応できる柔軟な設計
     if isinstance(place_id_or_name, (int, float)) or str(place_id_or_name).isdigit():
         place_name = JCD_MAP.get(f"{int(place_id_or_name):02d}", "不明")
     else:
