@@ -551,6 +551,10 @@ def run_v9_inference_and_notify(df_s1, df_s2):
     df_adv['Bet_Multi_2t'] = df_adv.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合ROI'], x['Active_2t'], x['Plus_2t'], x['的中率_2連単'], 20.0), axis=1)
     df_adv['Bet_Multi_2f'] = df_adv.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合2連複_ROI'], x['Active_2f'], x['Plus_2f'], x['的中率_2連複'], 30.0), axis=1)
         
+    # 💡 この2行が消えてしまっているのがエラーの直接の原因です！
+    dict_2t = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): row['Bet_Multi_2t'] for _, row in df_adv.iterrows() if row['Bet_Multi_2t'] > 0}
+    dict_2f = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): row['Bet_Multi_2f'] for _, row in df_adv.iterrows() if row['Bet_Multi_2f'] > 0}
+    
     buys_2t = []
     buys_2f = []
     debug_logs = {}
