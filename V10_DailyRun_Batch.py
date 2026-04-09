@@ -821,7 +821,7 @@ def run_v10_inference_and_notify(df_s1, df_s2):
         rank_str = f"{b['multi']}倍"
         quant_bet = b['multi'] * 100
         
-        ws, wd, wc = get_ensemble_weather(b['p'], b['time'])
+        ws, wd, wc, _ = get_ensemble_weather(b['p'], b['time'])
         wind_dir_str = "北" if (315 <= wd or wd < 45) else "東" if (45 <= wd < 135) else "南" if (135 <= wd < 225) else "西"
         
         row = [
