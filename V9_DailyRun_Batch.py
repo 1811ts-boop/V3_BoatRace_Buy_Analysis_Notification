@@ -722,40 +722,35 @@ def run_v9_inference_and_notify(df_s1, df_s2):
         b['type'] = '🛡️2複'
         buys_all.append(b)
 
-    # 💡 ソート順：倍率が高い順（5倍→3倍→1倍）→ 会場 → レース番号
-    buys_all = sorted(buys_all, key=lambda x: (-x['multi'], x['p'], x['r'], x['type']))
+    # 💡 ソート順を「会場 → レース番号 → 券種」に変更
+    buys_all = sorted(buys_all, key=lambda x: (x['p'], x['r'], x['type']))
 
     msg += f"\n■ 本日の厳選勝負レース (計{len(buys_all)}件)\n"
-    prev_multi = -1
-    prev_race_key = ""
+    msg += "【凡例】🔥5倍 💰3倍 🪙1倍\n"
     
-    # 💡【追加】スプレッドシートへ送るデータを貯める箱を用意
+    prev_place = ""
     sheet_data = []
     
     for b in buys_all:
-        if b['multi'] != prev_multi:
-            msg += f"\n▼ {b['m_icon']}勝負ゾーン\n"
-            prev_multi = b['multi']
-            prev_race_key = ""
+        if b['place'] != prev_place:
+            msg += f"\n◎{b['place']}\n"
+            prev_place = b['place']
             
-        current_race_key = f"{b['p']}_{b['r']}"
-        if current_race_key != prev_race_key:
-            msg += f"[{b['time']}] {b['place']} {b['r']}R ({b['cat']})\n"
-            prev_race_key = current_race_key
-            
-        msg += f" └ {b['type']}: {b['ticket']} (推定勝率: {b['prob']*100:.1f}%)\n"
+        # アイコンの最初の1文字（絵文字）だけを取得
+        emoji_icon = b['m_icon'][0]
+        
+        # 1行でスッキリ表示（勝率表記などはカット）
+        msg += f"[{b['time']}] {b['r']}R {b['type']}: {b['ticket']} {emoji_icon}\n"
 
-        # --- 💡【追加】ここからスプレッドシート用データの作成 ---
+        # --- スプレッドシート用データの作成 ---
         date_str = TODAY_OBJ.strftime('%Y/%m/%d')
-        sys_name = "V9"  # 💡 V9用に設定
+        sys_name = "V9"
         rank_str = f"{b['multi']}倍"
         quant_bet = b['multi'] * 100
         
-        # 💡 気象データをキャッシュから即座に取得
         ws, wd, wc = get_weather(b['p'], b['time'])
         wind_dir_str = "北" if (315 <= wd or wd < 45) else "東" if (45 <= wd < 135) else "南" if (135 <= wd < 225) else "西"
         
-        # A〜R列の順番に合わせたリスト作成（結果・配当・収支の列は "" で空けておく）
         row = [
             date_str, b['time'], sys_name, b['place'], b['r'], rank_str, 
             b['type'].replace('🎯', '').replace('🛡️', ''), b['ticket'], 
