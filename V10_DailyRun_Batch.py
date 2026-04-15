@@ -18,6 +18,7 @@ from googleapiclient.http import MediaIoBaseDownload
 import io
 import logging
 import gc
+import random
 import warnings
 import traceback # 💡これを追加（エラーの行番号を追跡するツールです）
 warnings.filterwarnings("ignore")
@@ -109,24 +110,37 @@ def send_line_broadcast(msg):
             # 💡エラーの発生源（何行目か、どの関数か）を全て出力させる
             logger.error(f"AI Error ({pid}): {e}\n{traceback.format_exc()}")
 
-def append_to_spreadsheet(values):
+def append_to_spreadsheet(values, retries=5):
     if not GCP_SA_CREDENTIALS or not SPREADSHEET_ID: return
     try:
         creds_dict = json.loads(GCP_SA_CREDENTIALS)
-        # 💡 ⭕️ Google DriveとSheetsの読み書き権限を明示的に要求する（SCOPESを追加）
         SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         service = build('sheets', 'v4', credentials=creds)
         body = {'values': values}
-        result = service.spreadsheets().values().append(
-            spreadsheetId=SPREADSHEET_ID,
-            range='Sheet1!A:R',
-            valueInputOption='USER_ENTERED',
-            body=body
-        ).execute()
-        logger.info(f"📝 スプレッドシートに {result.get('updates').get('updatedRows')} 行追記しました。")
+
+        # 💡 Exponential Backoff（指数的バックオフ）によるリトライ処理
+        for attempt in range(retries):
+            try:
+                result = service.spreadsheets().values().append(
+                    spreadsheetId=SPREADSHEET_ID,
+                    range='Sheet1!A:R',
+                    valueInputOption='USER_ENTERED',
+                    body=body
+                ).execute()
+                logger.info(f"📝 スプレッドシートに {result.get('updates').get('updatedRows')} 行追記しました。")
+                return  # 成功したらループを抜ける
+                
+            except Exception as api_err:
+                # 競合した場合は、待機時間を指数関数的に増やしながらリトライ（Jitterを加えて衝突を回避）
+                wait_time = (2 ** attempt) + random.uniform(0, 1)
+                logger.warning(f"⚠️ スプレッドシート書き込み競合/エラー。{wait_time:.1f}秒後に再試行します ({attempt+1}/{retries}). Error: {api_err}")
+                time.sleep(wait_time)
+                
+        logger.error("❌ スプレッドシートへの書き込みに最終的に失敗しました。")
+
     except Exception as e:
-        logger.error(f"❌ スプレッドシート書き込みエラー: {e}")
+        logger.error(f"❌ スプレッドシート認証/設定エラー: {e}")
 
 # =============================================================================
 # V10 気象アンサンブル・パイプライン (JMAメイン構成)
@@ -817,7 +831,7 @@ def run_v10_inference_and_notify(df_s1, df_s2):
 
         # --- スプレッドシート用データの作成 ---
         date_str = TODAY_OBJ.strftime('%Y/%m/%d')
-        sys_name = "V9"
+        sys_name = "V10"  # 💡 ⭕️ ここを V10 に修正！
         rank_str = f"{b['multi']}倍"
         quant_bet = b['multi'] * 100
         
