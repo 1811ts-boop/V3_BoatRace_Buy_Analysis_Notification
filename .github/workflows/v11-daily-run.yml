@@ -37,4 +37,4 @@ jobs:
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
         run: |
           # 先ほど作成したV11の実行ファイル名を指定してください
-          python v11_inference.py
+          python V11_DailyRun_Batch.py
