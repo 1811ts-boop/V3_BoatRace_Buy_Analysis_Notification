@@ -863,12 +863,13 @@ def run_v12_inference_and_notify(df_s1, df_s2):
 def main():
     logger.info("🚀 V12 System Start (Macro-Threat & Cond Prob Edition)")
     
+    # 💡 GitHub Actions環境の場合のみ、Driveから必須ファイルを一式ダウンロード
     if os.environ.get("GITHUB_ACTIONS") == "true":
         srv = get_drive_service()
-        # 💡 GitHub Actions環境の場合のダウンロード関数も修正する必要があります。
-        # このスクリプト内で定義されている prepare_ai_models() を V12仕様に書き換える必要があります。
-        # 以下に手動で対処するか、私が追加コードを出します。
-        pass
+        if srv:
+            prepare_ai_models(srv)
+        else:
+            logger.error("⚠️ GCP認証に失敗したためダウンロードをスキップします")
     
     dict_motor, dict_boat = build_latest_hardware_dict()
     dtide = pd.read_csv(TIDE_CSV_NAME) if os.path.exists(TIDE_CSV_NAME) else pd.DataFrame(columns=['DateInt', 'PlaceID', 'Hour', 'Tide_Level_cm', 'Tide_Trend'])
