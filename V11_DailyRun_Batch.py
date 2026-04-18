@@ -25,7 +25,7 @@ warnings.filterwarnings("ignore")
 # =============================================================================
 # 1. 環境設定・定数
 # =============================================================================
-logger = logging.getLogger("V9_DailyRun_LambdaRank")
+logger = logging.getLogger("V11_DailyRun_LambdaRank")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     sh = logging.StreamHandler()
@@ -42,7 +42,7 @@ SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")  # 💡 ⭕️ 環境変数に
 
 TIDE_CSV_NAME = "Tide_Master_2020_2026.csv"
 MASTER_CSV_NAME = "BoatRace_Master_Updated_with_2Tan_2Fuku.csv"
-ADVANCED_SWEEP_CSV = "V9_Advanced_Sweep_Results.csv" # 💡Finalを消し、これ1つに統合
+ADVANCED_SWEEP_CSV = "V11_Portfolio_OOS_Detailed_Results.csv"
 
 PROJECT_IDS = ['P0_SG', 'P1_G1_Elite', 'P2_Ladies', 'P3_General_Std', 'P4_Planning']
 MAX_WORKERS = 3  
@@ -95,9 +95,9 @@ def download_latest_file_by_name(service, file_name, save_dir="."):
     return True
 
 def prepare_ai_models(service):
-    logger.info("☁️ V9専用 AIモデル・マスターデータ・ポートフォリオをダウンロードします...")
-    os.makedirs("Models_Stage1_V9", exist_ok=True)
-    os.makedirs("Models_Stage2_V9", exist_ok=True)
+    logger.info("☁️ V11専用 AIモデル・マスターデータ・ポートフォリオをダウンロードします...")
+    os.makedirs("Models_Stage1_V12", exist_ok=True) # 💡 Stage1はV12のものを使い回す
+    os.makedirs("Models_Stage2_V11", exist_ok=True) # 💡 Stage2はV11専用
     
     download_latest_file_by_name(service, TIDE_CSV_NAME)
     logger.info("   - マスターデータ(500MB超)をダウンロード中...少々お待ちください")
@@ -105,8 +105,9 @@ def prepare_ai_models(service):
     download_latest_file_by_name(service, ADVANCED_SWEEP_CSV) # 💡ここを変更
     
     for pid in PROJECT_IDS:
-        download_latest_file_by_name(service, f"LGBM_Stage1_V9_{pid}.pkl", "Models_Stage1_V9")
-        download_latest_file_by_name(service, f"LGBM_Stage2_LambdaRank_V9_{pid}.pkl", "Models_Stage2_V9")
+        # 💡 それぞれV12とV11からダウンロード
+        download_latest_file_by_name(service, f"LGBM_Stage1_V12_{pid}.pkl", "Models_Stage1_V12")
+        download_latest_file_by_name(service, f"LGBM_Stage2_LambdaRank_V11_{pid}.pkl", "Models_Stage2_V11")
 
 def send_line_broadcast(msg):
     if not LINE_CHANNEL_ACCESS_TOKEN: return
@@ -262,7 +263,7 @@ def get_weather(place_id_or_name, target_time_str):
     return ws, wd, wc
 
 # =============================================================================
-# 3. V9 最新ハードウェア辞書の動的生成
+# 3. V11 最新ハードウェア辞書の動的生成
 # =============================================================================
 def safe_float(val, default=0.0):
     if pd.isna(val) or val == "" or val is None: return default
@@ -279,7 +280,7 @@ def get_rank_point(rank_val):
     return {1:10, 2:8, 3:6, 4:4, 5:2, 6:1}.get(r, 0.0)
 
 def build_latest_hardware_dict():
-    logger.info("⚙️ ダウンロードしたマスターCSVからV9用『最新ハードウェア辞書』を構築中...")
+    logger.info("⚙️ ダウンロードしたマスターCSVからV11用『最新ハードウェア辞書』を構築中...")
     if not os.path.exists(MASTER_CSV_NAME):
         logger.warning(f"⚠️ マスターデータが見つかりません。モーター予測値はデフォルト(0)で進行します。")
         return {}, {}
@@ -436,14 +437,14 @@ def scrape_today(today_obj):
     return pd.DataFrame(res)
 
 # =============================================================================
-# 5. V9 特徴量パイプライン
+# 5. V11 特徴量パイプライン
 # =============================================================================
 def get_rank_point_s1(rank_val):
     if pd.isna(rank_val) or rank_val == "" or rank_val is None: return -5.0
     r = safe_float(rank_val, 99)
     return {1:10, 2:8, 3:6, 4:4, 5:2, 6:1}.get(r, -5.0)
 
-def transform_for_v9_inference(df_raw, df_tide, dict_motor, dict_boat):
+def transform_for_v11_inference(df_raw, df_tide, dict_motor, dict_boat):
     fs1, fs2 = [], []
     error_count = 0 
     
@@ -472,11 +473,19 @@ def transform_for_v9_inference(df_raw, df_tide, dict_motor, dict_boat):
         tt = int(trow['Tide_Trend'].iloc[0]) if not trow.empty else 0
         
         bdata = {}
+        
+        # 💡 V11/V12新特徴量用のストック
+        official_sts = []
+        win_nats = []
+        
         for b in range(1, 7):
             wn = safe_float(row.get(f"R{b}_WinRate_National"))
             wl = safe_float(row.get(f"R{b}_WinRate_Local"), wn)
             m2 = safe_float(row.get(f"R{b}_Motor_2Ren"))
             ast = safe_float(row.get(f"R{b}_Avg_ST"), 0.17)
+            
+            official_sts.append(ast)
+            win_nats.append(wn)
             wt = safe_float(row.get(f"R{b}_Weight"), 51.0)
             fc = safe_float(row.get(f"R{b}_F_Count"))
             
@@ -506,13 +515,22 @@ def transform_for_v9_inference(df_raw, df_tide, dict_motor, dict_boat):
                 'b_idx': dict_boat.get((pid, b_no), {}).get('idx', 0)
             }
             
+        # 💡 V11/V12 最強マクロ特徴量の計算
+        f_program_distortion = win_nats[0] - max(win_nats[1:6])
+        avg_st_slow = sum(official_sts[0:3]) / 3.0
+        avg_st_dash = sum(official_sts[3:6]) / 3.0
+        f_dash_st_threat = avg_st_dash - avg_st_slow
+
         fs1.append({
             'Race_ID': f"{dt}_{pid}_{rnum}", 'Project_ID': proj_id, 'PlaceID': pid, 'Scheduled_Time': sched,
             'Course_Type': COURSE_TYPE_MAP.get(pid, 3), 'Month_Cos': math.cos(2 * math.pi * int(str(dt)[4:6]) / 12.0),
             'Weather_Code': wc, 'Tailwind_Comp': tw, 'Crosswind_Comp': cw, 'Tide_Level_cm': tl, 'Tide_Trend': tt,
             'B1_Power': bdata[1]['pwr'], 'B1_Local_WinRate': bdata[1]['wl'], 'B1_ST': bdata[1]['st'],
             'B1_Advantage': bdata[1]['pwr'] - max([bdata[x]['pwr'] for x in range(2, 7)]),
-            'Wall_ST': (bdata[2]['st'] + bdata[3]['st']) / 2.0, 'Dash_Threat': max([bdata[x]['pwr'] for x in range(4, 7)])
+            'Wall_ST': (bdata[2]['st'] + bdata[3]['st']) / 2.0, 'Dash_Threat': max([bdata[x]['pwr'] for x in range(4, 7)]),
+            # 💡 V11 新特徴量をStage 1データに追加
+            'F_Program_Distortion_Index': f_program_distortion,
+            'F_Dash_ST_Threat': f_dash_st_threat
         })
         
         for b in range(1, 7):
@@ -537,7 +555,7 @@ def transform_for_v9_inference(df_raw, df_tide, dict_motor, dict_boat):
     return pd.DataFrame(fs1), pd.DataFrame(fs2)
 
 # =============================================================================
-# 6. V9 ハイブリッド推論 ＆ LINE通知 (Kelly Criterion & 高速化対応版)
+# 6. V11 ハイブリッド推論 ＆ LINE通知 (Kelly Criterion & 高速化対応版)
 # =============================================================================
 def get_rough_cat(p): return "超堅め(0-20%)" if p < 0.2 else "やや堅め(20-40%)" if p < 0.4 else "普通(40-60%)" if p < 0.6 else "やや荒れ(60-80%)" if p < 0.8 else "大荒れ(80-100%)"
 
@@ -564,42 +582,51 @@ def calculate_probabilities(scores):
         
     return p_2tan, p_2fuku
 
-def run_v9_inference_and_notify(df_s1, df_s2):
+def run_v11_inference_and_notify(df_s1, df_s2):
     current_month = TODAY_OBJ.month
     
     if not os.path.exists(ADVANCED_SWEEP_CSV):
-        send_line_broadcast("❌ V9シミュレーションデータが見つかりませんでした。稼働を停止します。")
+        send_line_broadcast("❌ V11シミュレーションデータが見つかりませんでした。稼働を停止します。")
         return
         
     df_adv = pd.read_csv(ADVANCED_SWEEP_CSV)
     
-    # --- 💰 V10完全互換：動的フィルタリングとケリー基準の自動判定 ---
-    def parse_plus_yrs(val):
+    # --- 💰 V11：超・厳格フィルター ＆ S/A/Bランク自動資金傾斜 ---
+    def get_plus_ratio(x):
         try:
-            p = str(val).split('/')
-            return int(p[0]), int(p[1]) if len(p)==2 else 0
-        except:
-            return 0, 0
-            
-    df_adv[['Plus_2t', 'Active_2t']] = pd.DataFrame(df_adv['OOS_プラス年数(24~26年)'].apply(parse_plus_yrs).tolist(), index=df_adv.index)
-    df_adv[['Plus_2f', 'Active_2f']] = pd.DataFrame(df_adv['OOS_2連複_プラス年数(24~26年)'].apply(parse_plus_yrs).tolist(), index=df_adv.index)
-    
-    # 💡 判定に「実際の的中率 (hit_rate)」と「足切りライン (min_hit_rate)」の引数を追加
-    def get_bet_multiplier(races, roi, active, plus, hit_rate, min_hit_rate):
-        win_ratio = plus / active if active > 0 else 0
-        # 👑 Sランク：5倍
-        if ((races >= 30 and roi >= 130) or (races >= 20 and roi >= 150)) and win_ratio == 1.0: return 5
-        # 🎖️ Aランク：3倍
-        if ((races >= 20 and roi >= 115) or (races >= 15 and roi >= 130)) and win_ratio >= 0.6: return 3
-        
-        # 🛡️ Bランク：1倍（★提案Aの条件：10レース以上、ROI105%以上、指定的中率クリア、勝率50%以上）
-        if races >= 10 and roi >= 105 and hit_rate >= min_hit_rate and win_ratio >= 0.5: return 1
-        return 0
+            p = str(x).split('/')
+            return float(p[0]) / float(p[1]) if float(p[1]) > 0 else 0.0
+        except: return 0.0
 
-    df_adv['Bet_Multi_2t'] = df_adv.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合ROI'], x['Active_2t'], x['Plus_2t'], x['的中率_2連単'], 20.0), axis=1)
-    df_adv['Bet_Multi_2f'] = df_adv.apply(lambda x: get_bet_multiplier(x['OOS(未知)_統合レース数'], x['OOS(未知)_統合2連複_ROI'], x['Active_2f'], x['Plus_2f'], x['的中率_2連複'], 30.0), axis=1)
+    df_adv['Plus_Ratio_2t'] = df_adv['OOS_プラス年数(25~26年)'].apply(get_plus_ratio)
+    df_adv['Plus_Ratio_2f'] = df_adv['OOS_2連複_プラス年数(25~26年)'].apply(get_plus_ratio)
+
+    df_adv['Is_Golden_2t'] = (df_adv['OOS(未知)_統合レース数'] >= 15) & (df_adv['OOS(未知)_統合ROI'] >= 110) & (df_adv['Plus_Ratio_2t'] >= 0.6)
+    df_adv['Is_Golden_2f'] = (df_adv['OOS(未知)_統合レース数'] >= 15) & (df_adv['OOS(未知)_統合2連複_ROI'] >= 110) & (df_adv['Plus_Ratio_2f'] >= 0.6)
+
+    # 総合力スコアの計算
+    df_adv['Score_2t'] = np.where(df_adv['Is_Golden_2t'], (df_adv['OOS(未知)_統合ROI'] - 100) / 100 * df_adv['OOS(未知)_統合レース数'], -1)
+    df_adv['Score_2f'] = np.where(df_adv['Is_Golden_2f'], (df_adv['OOS(未知)_統合2連複_ROI'] - 100) / 100 * df_adv['OOS(未知)_統合レース数'], -1)
+
+    def calc_thresholds(scores_series):
+        valid_scores = scores_series[scores_series >= 0].sort_values(ascending=False).values
+        if len(valid_scores) == 0: return float('inf'), float('inf')
+        t_S = valid_scores[int(len(valid_scores) * 0.20)] if len(valid_scores) * 0.20 < len(valid_scores) else 0
+        t_A = valid_scores[int(len(valid_scores) * 0.50)] if len(valid_scores) * 0.50 < len(valid_scores) else 0
+        return t_S, t_A
+
+    t_S_2t, t_A_2t = calc_thresholds(df_adv['Score_2t'])
+    t_S_2f, t_A_2f = calc_thresholds(df_adv['Score_2f'])
+
+    def get_tier_multi(score, t_S, t_A):
+        if score < 0: return 0
+        if score >= t_S: return 5
+        if score >= t_A: return 3
+        return 1
+
+    df_adv['Bet_Multi_2t'] = df_adv['Score_2t'].apply(lambda x: get_tier_multi(x, t_S_2t, t_A_2t))
+    df_adv['Bet_Multi_2f'] = df_adv['Score_2f'].apply(lambda x: get_tier_multi(x, t_S_2f, t_A_2f))
         
-    # 💡 この2行が消えてしまっているのがエラーの直接の原因です！
     dict_2t = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): row['Bet_Multi_2t'] for _, row in df_adv.iterrows() if row['Bet_Multi_2t'] > 0}
     dict_2f = {(row['Month'], row['Project_ID'], row['場名'], row['Rough_Category']): row['Bet_Multi_2f'] for _, row in df_adv.iterrows() if row['Bet_Multi_2f'] > 0}
     
@@ -612,7 +639,8 @@ def run_v9_inference_and_notify(df_s1, df_s2):
         if ds1.empty: continue
             
         try:
-            m1_path = f"Models_Stage1_V9/LGBM_Stage1_V9_{pid}.pkl"
+            # 💡 V12のStage1モデルを読み込むように修正！
+            m1_path = f"Models_Stage1_V12/LGBM_Stage1_V12_{pid}.pkl"
             if not os.path.exists(m1_path): continue
             with open(m1_path, 'rb') as f: m1 = pickle.load(f)
             
@@ -661,9 +689,12 @@ def run_v9_inference_and_notify(df_s1, df_s2):
 
             # --- ⚡ Stage 2 準備 ---
             target_all_rids = set(target_rids_2t.keys()) | set(target_rids_2f.keys())
-            ds2 = df_s2[(df_s2['Project_ID'] == pid) & (df_s2['Race_ID'].isin(target_all_rids))].merge(ds1[['Race_ID', 'Stage1_Rough_Prob']], on='Race_ID', how='inner')
+            # 💡 Stage1で作った新特徴量もds2に引き継ぐ
+            merge_cols = ['Race_ID', 'Stage1_Rough_Prob', 'F_Program_Distortion_Index', 'F_Dash_ST_Threat']
+            ds2 = df_s2[(df_s2['Project_ID'] == pid) & (df_s2['Race_ID'].isin(target_all_rids))].merge(ds1[merge_cols], on='Race_ID', how='inner')
             
-            m2_path = f"Models_Stage2_V9/LGBM_Stage2_LambdaRank_V9_{pid}.pkl"
+            # 💡 モデルをV11から読み込む
+            m2_path = f"Models_Stage2_V11/LGBM_Stage2_LambdaRank_V11_{pid}.pkl"
             if not os.path.exists(m2_path): continue
             with open(m2_path, 'rb') as f: m2 = pickle.load(f)
             
@@ -705,7 +736,7 @@ def run_v9_inference_and_notify(df_s1, df_s2):
             logger.error(f"AI Error ({pid}): {e}")
 
     # 📊 判定プロセスの詳細コンソール出力
-    logger.info("📊 === V9 AI推論 1レースごとの判定レポート ===")
+    logger.info("📊 === V11 AI推論 1レースごとの判定レポート ===")
     for plid in sorted(debug_logs.keys()):
         place_name = JCD_MAP.get(f"{plid:02d}", "不明")
         races = sorted(debug_logs[plid], key=lambda x: x['rnum'])
@@ -720,7 +751,7 @@ def run_v9_inference_and_notify(df_s1, df_s2):
     logger.info("======================================")
 
     # LINE通知の組み立て
-    msg = f"🤖 V9 LambdaRank AI\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n"
+    msg = f"🤖 V11 LambdaRank AI\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n"
     
     if not buys_2t and not buys_2f:
         msg += "\n本日は勝負条件に合致するレースがありません。\n資金を温存します。"
@@ -757,7 +788,7 @@ def run_v9_inference_and_notify(df_s1, df_s2):
 
         # --- スプレッドシート用データの作成 ---
         date_str = TODAY_OBJ.strftime('%Y/%m/%d')
-        sys_name = "V9"
+        sys_name = "V11"
         rank_str = f"{b['multi']}倍"
         quant_bet = b['multi'] * 100
         
@@ -778,10 +809,10 @@ def run_v9_inference_and_notify(df_s1, df_s2):
         append_to_spreadsheet(sheet_data)
 
     send_line_broadcast(msg.strip())
-    logger.info(f"V9買い目送信完了: 買い目計{len(buys_all)}件")
+    logger.info(f"V11買い目送信完了: 買い目計{len(buys_all)}件")
 
 def main():
-    logger.info("🚀 V9 System Start (LambdaRank Hybrid Edition)")
+    logger.info("🚀 V11 System Start (LambdaRank Hybrid Edition)")
     
     if os.environ.get("GITHUB_ACTIONS") == "true":
         srv = get_drive_service()
@@ -796,9 +827,9 @@ def main():
         logger.info("データ取得不可（開催なし、またはメンテ）")
         return
         
-    s1, s2 = transform_for_v9_inference(df, dtide, dict_motor, dict_boat)
+    s1, s2 = transform_for_v11_inference(df, dtide, dict_motor, dict_boat)
     if not s1.empty and not s2.empty:
-        run_v9_inference_and_notify(s1, s2)
+        run_v11_inference_and_notify(s1, s2)
         
     logger.info("Daily Job Completed.")
 
