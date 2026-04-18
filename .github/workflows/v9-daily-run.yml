@@ -1,0 +1,21 @@
+name: V9 Daily AI
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 20 * * *' # 日本時間 5:30 (UTC 20:30)
+jobs:
+  run-inference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12', cache: 'pip' }
+      - run: pip install requests pandas numpy lightgbm scikit-learn beautifulsoup4 google-api-python-client google-auth
+      - name: Run V12
+        env:
+          TZ: 'Asia/Tokyo'
+          GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        run: python V9_DailyRun_Batch.py
