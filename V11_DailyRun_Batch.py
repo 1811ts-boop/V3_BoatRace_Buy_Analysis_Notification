@@ -260,6 +260,11 @@ def get_weather(place_id_or_name, target_time_str):
             ws, wd, wc = 0.0, 0.0, 1
 
     WEATHER_CACHE[cache_key] = (ws, wd, wc)
+    
+    # 💡 【追加】取得した風速・風向の数値をコンソールに出力する
+    wind_dir_str = "北" if (315 <= wd or wd < 45) else "東" if (45 <= wd < 135) else "南" if (135 <= wd < 225) else "西"
+    logger.info(f"   └ 🍃 取得データ -> 風速: {ws}m/s | 風向: {wd}°({wind_dir_str}) | 天候コード: {wc}")
+    
     return ws, wd, wc
 
 # =============================================================================
