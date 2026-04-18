@@ -1,40 +1,21 @@
-name: V12 Daily Inference Run
-
+name: V12 Daily AI
 on:
-  # 手動実行用トリガー
   workflow_dispatch:
-
-  # スケジュール実行用トリガー（例：毎日日本時間 朝8時 = UTC 23時）
-  # 必要に応じてコメントアウトを外して時間を調整してください
-  # schedule:
-  #   - cron: '0 23 * * *'
-
+  schedule:
+    - cron: '20 22 * * *' # 日本時間 7:20 (UTC 22:20)
 jobs:
   run-inference:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          # 必要なライブラリをインストール（requirements.txtがあれば 'pip install -r requirements.txt' でも可）
-          pip install requests pandas numpy lightgbm scikit-learn beautifulsoup4 google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
-          
-      - name: Run V12 Inference Script
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12', cache: 'pip' }
+      - run: pip install requests pandas numpy lightgbm scikit-learn beautifulsoup4 google-api-python-client google-auth
+      - name: Run V12
         env:
-          # GitHub Secrets に登録した環境変数をスクリプトに渡す
+          TZ: 'Asia/Tokyo'
           GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
-        run: |
-          # V12の実行ファイル名を指定してください（例：v12_inference.py）
-          python V12_DailyRun_Batch.py
+        run: python V12_DailyRun_Batch.py
