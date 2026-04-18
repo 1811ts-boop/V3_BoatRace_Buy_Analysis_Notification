@@ -37,4 +37,4 @@ jobs:
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
         run: |
           # V12の実行ファイル名を指定してください（例：v12_inference.py）
-          python v12_inference.py
+          python V12_DailyRun_Batch.py
