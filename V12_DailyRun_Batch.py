@@ -779,6 +779,7 @@ def run_v12_inference_and_notify(df_s1, df_s2):
             # --- 🎯 買い目抽出 (倍率データを紐づけ) ---
             grade = "SG" if pid == "P0_SG" else "G1" if pid == "P1_G1_Elite" else "女子" if pid == "P2_Ladies" else "一般" if pid == "P3_General_Std" else "企画"
             
+            # --- 🎯 買い目抽出 (V12固有の df_prob 参照方式) ---
             for rid, multi in target_rids_2t.items():
                 if rid not in best_2tan_df['Race_ID'].values: continue
                 b_2t = best_2tan_df[best_2tan_df['Race_ID'] == rid].iloc[0]
@@ -787,7 +788,7 @@ def run_v12_inference_and_notify(df_s1, df_s2):
                 
                 m_icon = "🔥5倍" if multi == 5 else "💰3倍" if multi == 3 else "🪙1倍"
                 
-                buys_2t.append({'time': r_info['Scheduled_Time'], 'p': plid, 'place': JCD_MAP.get(f"{plid:02d}", "不明"), 'r': int(rid.split('_')[2]), 'grade': grade, 'cat': get_rough_cat(r_info['Stage1_Rough_Prob']), 'ticket': f"{int(b_2t['Win_Boat'])}-{int(b_2t['Boat_Number'])}", 'prob': b_2t['P_2tan'], 'multi': multi, 'm_icon': m_icon, 'raw_prob': r_info['Stage1_Rough_Prob']}) # 💡 raw_prob を追加
+                buys_2t.append({'time': r_info['Scheduled_Time'], 'p': plid, 'place': JCD_MAP.get(f"{plid:02d}", "不明"), 'r': int(rid.split('_')[2]), 'grade': grade, 'cat': get_rough_cat(r_info['Stage1_Rough_Prob']), 'ticket': f"{int(b_2t['Win_Boat'])}-{int(b_2t['Boat_Number'])}", 'prob': b_2t['P_2tan'], 'multi': multi, 'm_icon': m_icon, 'raw_prob': r_info['Stage1_Rough_Prob']})
                 
             for rid, multi in target_rids_2f.items():
                 if rid not in best_2fuku_df['Race_ID'].values: continue
@@ -797,7 +798,7 @@ def run_v12_inference_and_notify(df_s1, df_s2):
                 
                 m_icon = "🔥5倍" if multi == 5 else "💰3倍" if multi == 3 else "🪙1倍"
                 
-                buys_2f.append({'time': r_info['Scheduled_Time'], 'p': plid, 'place': JCD_MAP.get(f"{plid:02d}", "不明"), 'r': int(rid.split('_')[2]), 'grade': grade, 'cat': get_rough_cat(r_info['Stage1_Rough_Prob']), 'ticket': f"{int(b_2f['B1_fuku'])}={int(b_2f['B2_fuku'])}", 'prob': b_2f['P_2fuku'], 'multi': multi, 'm_icon': m_icon, 'raw_prob': r_info['Stage1_Rough_Prob']}) # 💡 raw_prob を追加
+                buys_2f.append({'time': r_info['Scheduled_Time'], 'p': plid, 'place': JCD_MAP.get(f"{plid:02d}", "不明"), 'r': int(rid.split('_')[2]), 'grade': grade, 'cat': get_rough_cat(r_info['Stage1_Rough_Prob']), 'ticket': f"{int(b_2f['B1_fuku'])}={int(b_2f['B2_fuku'])}", 'prob': b_2f['P_2fuku'], 'multi': multi, 'm_icon': m_icon, 'raw_prob': r_info['Stage1_Rough_Prob']})
                     
         except Exception as e: 
             logger.error(f"AI Error ({pid}): {e}\n{traceback.format_exc()}")
@@ -818,19 +819,19 @@ def run_v12_inference_and_notify(df_s1, df_s2):
     logger.info("======================================")
 
     # LINE通知の組み立て
-    # LINE通知の組み立て
     msg = f"🤖 V12 System (Macro-Threat & Cond Prob)\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n"
 
     buys_all = []
     for b in buys_2t:
         b['type'] = '🎯2単'
-        b['k_type'] = '2tan' # 💡 お宝判定用
+        b['k_type'] = '2tan' # お宝判定用
         buys_all.append(b)
     for b in buys_2f:
         b['type'] = '🛡️2複'
-        b['k_type'] = '2fuku' # 💡 お宝判定用
+        b['k_type'] = '2fuku' # お宝判定用
         buys_all.append(b)
 
+    # ソート順を「会場 → レース番号 → 券種」に変更
     buys_all = sorted(buys_all, key=lambda x: (x['p'], x['r'], x['type']))
 
     # 💡 お宝条件に合致するものだけをLINE通知対象として抽出
@@ -838,7 +839,8 @@ def run_v12_inference_and_notify(df_s1, df_s2):
     for b in buys_all:
         prob_cat = round(b['raw_prob'] * 20) / 20.0
         for t in V12_TREASURES:
-            if t['type'] == b['k_type'] and abs(t['prob_cat'] - prob_cat) < 0.01 and b['place'] in t['places']:
+            # 💡 【微修正】t['multi'] == b['multi'] のチェックを追加し、過去検証データと条件を完全一致化
+            if t['type'] == b['k_type'] and abs(t['prob_cat'] - prob_cat) < 0.01 and b['place'] in t['places'] and t['multi'] == b['multi']:
                 line_targets.append(b)
                 break
 
@@ -853,7 +855,7 @@ def run_v12_inference_and_notify(df_s1, df_s2):
                 prev_place = b['place']
             msg += f"[{b['time']}] {b['r']}R {b['type']}: {b['ticket']} {b['m_icon'][0]}\n"
 
-    # --- スプレッドシート用データの作成（💡ここはポートフォリオ全件＝buys_allが対象） ---
+    # --- スプレッドシート用データの作成（ここはポートフォリオ全件＝buys_allが対象） ---
     sheet_data = []
     for b in buys_all:
         date_str = TODAY_OBJ.strftime('%Y/%m/%d')
@@ -861,6 +863,7 @@ def run_v12_inference_and_notify(df_s1, df_s2):
         rank_str = f"{b['multi']}倍"
         quant_bet = b['multi'] * 100
         
+        # V12固有のアンサンブル気象関数（戻り値4つ）をコール
         ws, wd, wc, _ = get_ensemble_weather(b['p'], b['time'])
         wind_dir_str = "北" if (315 <= wd or wd < 45) else "東" if (45 <= wd < 135) else "南" if (135 <= wd < 225) else "西"
         
