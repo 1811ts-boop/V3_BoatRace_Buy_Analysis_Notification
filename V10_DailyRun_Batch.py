@@ -568,12 +568,10 @@ def transform_for_v9_inference(df_raw, df_tide, dict_motor, dict_boat):
 def get_rough_cat(p): return "超堅め(0-20%)" if p < 0.2 else "やや堅め(20-40%)" if p < 0.4 else "普通(40-60%)" if p < 0.6 else "やや荒れ(60-80%)" if p < 0.8 else "大荒れ(80-100%)"
 
 def run_v10_inference_and_notify(df_s1, df_s2):
-    # 💡 [追加] LINE通知用のV10お宝条件リスト
+    # 💡 [過学習排除版] LINE通知用のV10厳選お宝条件リスト
     V10_TREASURES = [
-        {'type': '2tan',  'prob_cat': 0.20, 'places': ["常滑", "住之江", "尼崎", "若松"]},
-        {'type': '2tan',  'prob_cat': 0.10, 'places': ["びわこ"]},
-        {'type': '2tan',  'prob_cat': 0.25, 'places': ["宮島", "大村", "多摩川"]},
-        {'type': '2fuku', 'prob_cat': 0.00, 'places': ["丸亀", "江戸川"]},
+        {'type': '2tan',  'prob_cat': 0.20, 'multi': 3, 'places': ["常滑", "住之江", "尼崎", "若松"]},
+        {'type': '2tan',  'prob_cat': 0.25, 'multi': 1, 'places': ["宮島", "大村", "多摩川"]},
     ]
 
     current_month = TODAY_OBJ.month
