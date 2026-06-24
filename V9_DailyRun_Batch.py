@@ -709,13 +709,13 @@ def run_v9_inference_and_notify(df_s1, df_s2):
                     multi = target_rids_2t[rid]
                     best_2tan = sorted(p_2tan.items(), key=lambda x: x[1], reverse=True)[0]
                     m_icon = "🔥5倍" if multi == 5 else "💰3倍" if multi == 3 else "🪙1倍"
-                    buys_2t.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': best_2tan[0], 'prob': best_2tan[1], 'multi': multi, 'm_icon': m_icon, 'raw_prob': r_info['Stage1_Rough_Prob']}) # 💡 raw_prob を追加
+                    buys_2t.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': best_2tan[0], 'prob': best_2tan[1], 'multi': multi, 'm_icon': m_icon, 'raw_prob': r_info['Stage1_Rough_Prob']})
                 
                 if rid in target_rids_2f:
                     multi = target_rids_2f[rid]
                     best_2fuku = sorted(p_2fuku.items(), key=lambda x: x[1], reverse=True)[0]
                     m_icon = "🔥5倍" if multi == 5 else "💰3倍" if multi == 3 else "🪙1倍"
-                    buys_2f.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': best_2fuku[0], 'prob': best_2fuku[1], 'multi': multi, 'm_icon': m_icon, 'raw_prob': r_info['Stage1_Rough_Prob']}) # 💡 raw_prob を追加
+                    buys_2f.append({'time': sched_time, 'p': plid, 'place': place_name, 'r': rnum, 'grade': grade, 'cat': cat, 'ticket': best_2fuku[0], 'prob': best_2fuku[1], 'multi': multi, 'm_icon': m_icon, 'raw_prob': r_info['Stage1_Rough_Prob']})
                     
         except Exception as e: 
             logger.error(f"AI Error ({pid}): {e}")
@@ -741,14 +741,14 @@ def run_v9_inference_and_notify(df_s1, df_s2):
     buys_all = []
     for b in buys_2t:
         b['type'] = '🎯2単'
-        b['k_type'] = '2tan' # 💡 お宝判定用
+        b['k_type'] = '2tan' # お宝判定用
         buys_all.append(b)
     for b in buys_2f:
         b['type'] = '🛡️2複'
-        b['k_type'] = '2fuku' # 💡 お宝判定用
+        b['k_type'] = '2fuku' # お宝判定用
         buys_all.append(b)
 
-    # 💡 ソート順を「会場 → レース番号 → 券種」に変更
+    # ソート順を「会場 → レース番号 → 券種」に変更
     buys_all = sorted(buys_all, key=lambda x: (x['p'], x['r'], x['type']))
 
     # 💡 お宝条件に合致するものだけをLINE通知対象として抽出
@@ -771,7 +771,7 @@ def run_v9_inference_and_notify(df_s1, df_s2):
                 prev_place = b['place']
             msg += f"[{b['time']}] {b['r']}R {b['type']}: {b['ticket']} {b['m_icon'][0]}\n"
 
-    # --- スプレッドシート用データの作成（💡ここはポートフォリオ全件＝buys_allが対象） ---
+    # --- スプレッドシート用データの作成（ここはポートフォリオ全件＝buys_allが対象） ---
     sheet_data = []
     for b in buys_all:
         date_str = TODAY_OBJ.strftime('%Y/%m/%d')
