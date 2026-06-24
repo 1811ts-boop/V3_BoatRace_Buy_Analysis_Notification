@@ -805,14 +805,14 @@ def run_v10_inference_and_notify(df_s1, df_s2):
     buys_all = []
     for b in buys_2t:
         b['type'] = '🎯2単'
-        b['k_type'] = '2tan' # 💡 お宝判定用
+        b['k_type'] = '2tan' # お宝判定用
         buys_all.append(b)
     for b in buys_2f:
         b['type'] = '🛡️2複'
-        b['k_type'] = '2fuku' # 💡 お宝判定用
+        b['k_type'] = '2fuku' # お宝判定用
         buys_all.append(b)
 
-    # 💡 ソート順を「会場 → レース番号 → 券種」に変更
+    # ソート順を「会場 → レース番号 → 券種」に変更
     buys_all = sorted(buys_all, key=lambda x: (x['p'], x['r'], x['type']))
 
     # 💡 お宝条件に合致するものだけをLINE通知対象として抽出
@@ -835,7 +835,7 @@ def run_v10_inference_and_notify(df_s1, df_s2):
                 prev_place = b['place']
             msg += f"[{b['time']}] {b['r']}R {b['type']}: {b['ticket']} {b['m_icon'][0]}\n"
 
-    # --- スプレッドシート用データの作成（💡ここはポートフォリオ全件＝buys_allが対象） ---
+    # --- スプレッドシート用データの作成（ここはポートフォリオ全件＝buys_allが対象） ---
     sheet_data = []
     for b in buys_all:
         date_str = TODAY_OBJ.strftime('%Y/%m/%d')
