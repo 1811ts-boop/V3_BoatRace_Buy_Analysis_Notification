@@ -583,6 +583,16 @@ def transform_for_v12_inference(df_raw, df_tide, dict_motor, dict_boat):
 def get_rough_cat(p): return "超堅め(0-20%)" if p < 0.2 else "やや堅め(20-40%)" if p < 0.4 else "普通(40-60%)" if p < 0.6 else "やや荒れ(60-80%)" if p < 0.8 else "大荒れ(80-100%)"
 
 def run_v12_inference_and_notify(df_s1, df_s2):
+    # 💡 [追加] LINE通知用のお宝条件リスト
+    V12_TREASURES = [
+        {'type': '2fuku', 'prob_cat': 0.35, 'places': ["蒲郡", "徳山", "唐津", "尼崎"]},
+        {'type': '2tan',  'prob_cat': 0.15, 'places': ["宮島", "尼崎"]},
+        {'type': '2fuku', 'prob_cat': 0.15, 'places': ["唐津", "尼崎", "浜名湖"]},
+        {'type': '2tan',  'prob_cat': 0.10, 'places': ["びわこ", "尼崎", "津", "唐津", "浜名湖"]},
+        {'type': '2fuku', 'prob_cat': 0.25, 'places': ["江戸川", "多摩川"]},
+        {'type': '2fuku', 'prob_cat': 0.30, 'places': ["大村", "徳山", "尼崎"]},
+    ]
+
     current_month = TODAY_OBJ.month
     
     # 💡 読み込むポートフォリオをV12の統合版に変更
@@ -775,7 +785,7 @@ def run_v12_inference_and_notify(df_s1, df_s2):
                 
                 m_icon = "🔥5倍" if multi == 5 else "💰3倍" if multi == 3 else "🪙1倍"
                 
-                buys_2t.append({'time': r_info['Scheduled_Time'], 'p': plid, 'place': JCD_MAP.get(f"{plid:02d}", "不明"), 'r': int(rid.split('_')[2]), 'grade': grade, 'cat': get_rough_cat(r_info['Stage1_Rough_Prob']), 'ticket': f"{int(b_2t['Win_Boat'])}-{int(b_2t['Boat_Number'])}", 'prob': b_2t['P_2tan'], 'multi': multi, 'm_icon': m_icon})
+                buys_2t.append({'time': r_info['Scheduled_Time'], 'p': plid, 'place': JCD_MAP.get(f"{plid:02d}", "不明"), 'r': int(rid.split('_')[2]), 'grade': grade, 'cat': get_rough_cat(r_info['Stage1_Rough_Prob']), 'ticket': f"{int(b_2t['Win_Boat'])}-{int(b_2t['Boat_Number'])}", 'prob': b_2t['P_2tan'], 'multi': multi, 'm_icon': m_icon, 'raw_prob': r_info['Stage1_Rough_Prob']}) # 💡 raw_prob を追加
                 
             for rid, multi in target_rids_2f.items():
                 if rid not in best_2fuku_df['Race_ID'].values: continue
@@ -785,7 +795,7 @@ def run_v12_inference_and_notify(df_s1, df_s2):
                 
                 m_icon = "🔥5倍" if multi == 5 else "💰3倍" if multi == 3 else "🪙1倍"
                 
-                buys_2f.append({'time': r_info['Scheduled_Time'], 'p': plid, 'place': JCD_MAP.get(f"{plid:02d}", "不明"), 'r': int(rid.split('_')[2]), 'grade': grade, 'cat': get_rough_cat(r_info['Stage1_Rough_Prob']), 'ticket': f"{int(b_2f['B1_fuku'])}={int(b_2f['B2_fuku'])}", 'prob': b_2f['P_2fuku'], 'multi': multi, 'm_icon': m_icon})
+                buys_2f.append({'time': r_info['Scheduled_Time'], 'p': plid, 'place': JCD_MAP.get(f"{plid:02d}", "不明"), 'r': int(rid.split('_')[2]), 'grade': grade, 'cat': get_rough_cat(r_info['Stage1_Rough_Prob']), 'ticket': f"{int(b_2f['B1_fuku'])}={int(b_2f['B2_fuku'])}", 'prob': b_2f['P_2fuku'], 'multi': multi, 'm_icon': m_icon, 'raw_prob': r_info['Stage1_Rough_Prob']}) # 💡 raw_prob を追加
                     
         except Exception as e: 
             logger.error(f"AI Error ({pid}): {e}\n{traceback.format_exc()}")
@@ -806,40 +816,46 @@ def run_v12_inference_and_notify(df_s1, df_s2):
     logger.info("======================================")
 
     # LINE通知の組み立て
+    # LINE通知の組み立て
     msg = f"🤖 V12 System (Macro-Threat & Cond Prob)\n📅 {TODAY_OBJ.strftime('%Y年%m月%d日')}\n"
-    
-    if not buys_2t and not buys_2f:
-        msg += "\n本日は勝負条件に合致するレースがありません。\n資金を温存します。"
-        send_line_broadcast(msg)
-        return
 
     buys_all = []
     for b in buys_2t:
         b['type'] = '🎯2単'
+        b['k_type'] = '2tan' # 💡 お宝判定用
         buys_all.append(b)
     for b in buys_2f:
         b['type'] = '🛡️2複'
+        b['k_type'] = '2fuku' # 💡 お宝判定用
         buys_all.append(b)
 
     buys_all = sorted(buys_all, key=lambda x: (x['p'], x['r'], x['type']))
 
-    msg += f"\n■ 本日の厳選勝負レース (計{len(buys_all)}件)\n"
-    msg += "【凡例】🔥5倍 💰3倍 🪙1倍\n"
-    
-    prev_place = ""
-    sheet_data = []
-    
+    # 💡 お宝条件に合致するものだけをLINE通知対象として抽出
+    line_targets = []
     for b in buys_all:
-        if b['place'] != prev_place:
-            msg += f"\n◎{b['place']}\n"
-            prev_place = b['place']
-            
-        emoji_icon = b['m_icon'][0]
-        msg += f"[{b['time']}] {b['r']}R {b['type']}: {b['ticket']} {emoji_icon}\n"
+        prob_cat = round(b['raw_prob'] * 20) / 20.0
+        for t in V12_TREASURES:
+            if t['type'] == b['k_type'] and abs(t['prob_cat'] - prob_cat) < 0.01 and b['place'] in t['places']:
+                line_targets.append(b)
+                break
 
-        # --- スプレッドシート用データの作成 ---
+    if not line_targets:
+        msg += "\n本日は勝負条件（お宝条件）に合致するレースがありません。\n資金を温存します。"
+    else:
+        msg += f"\n■ 本日の厳選勝負レース (計{len(line_targets)}件)\n【凡例】🔥5倍 💰3倍 🪙1倍\n"
+        prev_place = ""
+        for b in line_targets:
+            if b['place'] != prev_place:
+                msg += f"\n◎{b['place']}\n"
+                prev_place = b['place']
+            msg += f"[{b['time']}] {b['r']}R {b['type']}: {b['ticket']} {b['m_icon'][0]}\n"
+
+    # --- スプレッドシート用データの作成（💡ここはポートフォリオ全件＝buys_allが対象） ---
+    sheet_data = []
+    for b in buys_all:
         date_str = TODAY_OBJ.strftime('%Y/%m/%d')
-        sys_name = "V12"  # 💡 V12に変更
+        sys_name = "V12"
         rank_str = f"{b['multi']}倍"
         quant_bet = b['multi'] * 100
         
