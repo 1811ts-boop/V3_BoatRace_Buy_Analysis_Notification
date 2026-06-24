@@ -565,15 +565,20 @@ def calculate_probabilities(scores):
     return p_2tan, p_2fuku
 
 def run_v9_inference_and_notify(df_s1, df_s2):
-    # 💡 [追加] LINE通知用のV9お宝条件リスト
+    # 💡 [過学習排除版] LINE通知用のV9厳選お宝条件リスト
     V9_TREASURES = [
-        {'type': '2tan',  'prob_cat': 0.15, 'places': ["びわこ", "宮島", "下関", "大村", "芦屋", "若松", "鳴門", "多摩川"]},
-        {'type': '2tan',  'prob_cat': 0.20, 'places': ["びわこ", "宮島", "津", "大村", "蒲郡", "丸亀", "児島", "鳴門", "多摩川"]},
-        {'type': '2tan',  'prob_cat': 0.25, 'places': ["唐津", "宮島", "福岡", "尼崎"]},
-        {'type': '2fuku', 'prob_cat': 0.15, 'places': ["丸亀", "多摩川", "若松"]},
-        {'type': '2fuku', 'prob_cat': 0.20, 'places': ["丸亀", "多摩川", "桐生", "江戸川", "津", "下関", "蒲郡"]},
-        {'type': '2fuku', 'prob_cat': 0.30, 'places': ["蒲郡", "びわこ", "下関", "尼崎", "芦屋", "若松", "鳴門", "唐津", "多摩川", "桐生"]},
-        {'type': '2fuku', 'prob_cat': 0.35, 'places': ["宮島", "下関", "尼崎", "浜名湖", "唐津", "多摩川", "常滑"]},
+        {'type': '2tan',  'prob_cat': 0.15, 'multi': 3, 'places': ["びわこ", "宮島", "下関"]},
+        {'type': '2tan',  'prob_cat': 0.25, 'multi': 3, 'places': ["唐津", "宮島", "福岡", "尼崎"]},
+        {'type': '2fuku', 'prob_cat': 0.30, 'multi': 1, 'places': ["蒲郡", "びわこ", "下関", "尼崎", "芦屋", "若松", "鳴門", "唐津", "多摩川", "桐生"]},
+        {'type': '2fuku', 'prob_cat': 0.15, 'multi': 1, 'places': ["丸亀", "多摩川", "若松"]},
+        {'type': '2tan',  'prob_cat': 0.15, 'multi': 1, 'places': ["大村", "宮島", "芦屋", "若松", "鳴門", "多摩川"]},
+        {'type': '2fuku', 'prob_cat': 0.20, 'multi': 1, 'places': ["丸亀", "多摩川", "桐生", "江戸川", "津", "下関", "蒲郡"]},
+        {'type': '2fuku', 'prob_cat': 0.35, 'multi': 1, 'places': ["宮島", "下関", "尼崎", "浜名湖", "唐津", "多摩川", "常滑"]},
+        {'type': '2tan',  'prob_cat': 0.20, 'multi': 1, 'places': ["大村", "蒲郡", "丸亀", "児島", "鳴門", "多摩川"]},
+        {'type': '2tan',  'prob_cat': 0.30, 'multi': 1, 'places': ["児島", "丸亀", "浜名湖", "多摩川", "江戸川"]},
+        {'type': '2tan',  'prob_cat': 0.25, 'multi': 1, 'places': ["宮島", "浜名湖", "常滑"]},
+        {'type': '2fuku', 'prob_cat': 0.25, 'multi': 1, 'places': ["宮島", "蒲郡", "大村", "浜名湖", "鳴門", "多摩川"]},
+        {'type': '2fuku', 'prob_cat': 0.40, 'multi': 1, 'places': ["江戸川", "蒲郡", "下関", "大村", "鳴門", "唐津"]},
     ]
 
     current_month = TODAY_OBJ.month
