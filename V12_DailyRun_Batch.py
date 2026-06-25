@@ -879,19 +879,50 @@ def run_v12_inference_and_notify(df_s1, df_s2):
     if sheet_data:
         append_to_spreadsheet(sheet_data)
 
-    send_line_broadcast(msg.strip())
-    logger.info(f"V12買い目送信完了: 買い目計{len(buys_all)}件")
+    # ---------------------------------------------------------
+    # ▼▼▼ ここから差し替え ▼▼▼
+    # ---------------------------------------------------------
+    def queue_line_message(msg_text):
+        # 資金温存（お宝レースなし）の日は、合体させる必要がないので記録しない
+        if "本日は勝負条件（お宝条件）に合致するレースがありません" in msg_text:
+            return 
+            
+        import json
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        import os
+        
+        creds_dict = json.loads(os.environ.get("GCP_SA_CREDENTIALS"))
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict, scopes=['https://www.googleapis.com/auth/spreadsheets']
+        )
+        service = build('sheets', 'v4', credentials=creds)
+        
+        # LINE_QueueシートのA列にメッセージを追記
+        service.spreadsheets().values().append(
+            spreadsheetId=os.environ.get("SPREADSHEET_ID"),
+            range="LINE_Queue!A1",
+            valueInputOption="USER_ENTERED",
+            body={'values': [[msg_text]]}
+        ).execute()
+
+    # LINEに直接送る代わりに、上の関数を使ってスプレッドシートへ送信予約
+    queue_line_message(msg.strip())
+    
+    # ログの文言だけ「キュー登録」と少し変えておくと分かりやすいです
+    logger.info(f"V10買い目送信完了(キュー登録): 買い目計{len(buys_all)}件")
+    # ---------------------------------------------------------
+    # ▲▲▲ ここまで差し替え ▲▲▲
+    # ---------------------------------------------------------
 
 def main():
-    logger.info("🚀 V12 System Start (Macro-Threat & Cond Prob Edition)")
+    logger.info("🚀 V12 System Start (Conditional Probability Edition)")
     
     # 💡 GitHub Actions環境の場合のみ、Driveから必須ファイルを一式ダウンロード
     if os.environ.get("GITHUB_ACTIONS") == "true":
         srv = get_drive_service()
-        if srv:
-            prepare_ai_models(srv)
-        else:
-            logger.error("⚠️ GCP認証に失敗したためダウンロードをスキップします")
+        if srv: prepare_ai_models(srv)
+        else: logger.error("⚠️ GCP認証に失敗したためダウンロードをスキップします")
     
     dict_motor, dict_boat = build_latest_hardware_dict()
     dtide = pd.read_csv(TIDE_CSV_NAME) if os.path.exists(TIDE_CSV_NAME) else pd.DataFrame(columns=['DateInt', 'PlaceID', 'Hour', 'Tide_Level_cm', 'Tide_Trend'])
@@ -901,9 +932,9 @@ def main():
         logger.info("データ取得不可（開催なし、またはメンテ）")
         return
         
-    s1, s2 = transform_for_v12_inference(df, dtide, dict_motor, dict_boat)
+    s1, s2 = transform_for_v9_inference(df, dtide, dict_motor, dict_boat)
     if not s1.empty and not s2.empty:
-        run_v12_inference_and_notify(s1, s2)
+        run_v10_inference_and_notify(s1, s2) # V10用に変更
         
     logger.info("Daily Job Completed.")
 
