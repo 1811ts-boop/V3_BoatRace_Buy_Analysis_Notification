@@ -2,7 +2,7 @@ name: V10 Daily AI
 on:
   workflow_dispatch:
   schedule:
-    - cron: '00 21 * * *' # 日本時間 6:00 (UTC 21:00)
+    - cron: '30 20 * * *' # 日本時間 5:30 (UTC 20:30)
 jobs:
   run-inference:
     runs-on: ubuntu-latest
