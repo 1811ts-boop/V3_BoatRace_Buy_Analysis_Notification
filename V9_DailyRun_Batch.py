@@ -793,8 +793,41 @@ def run_v9_inference_and_notify(df_s1, df_s2):
     if sheet_data:
         append_to_spreadsheet(sheet_data)
 
-    send_line_broadcast(msg.strip())
-    logger.info(f"V9買い目送信完了: 買い目計{len(buys_all)}件")
+    # ---------------------------------------------------------
+    # ▼▼▼ ここから差し替え ▼▼▼
+    # ---------------------------------------------------------
+    def queue_line_message(msg_text):
+        # 資金温存（お宝レースなし）の日は、合体させる必要がないので記録しない
+        if "本日は勝負条件（お宝条件）に合致するレースがありません" in msg_text:
+            return 
+            
+        import json
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        import os
+        
+        creds_dict = json.loads(os.environ.get("GCP_SA_CREDENTIALS"))
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict, scopes=['https://www.googleapis.com/auth/spreadsheets']
+        )
+        service = build('sheets', 'v4', credentials=creds)
+        
+        # LINE_QueueシートのA列にメッセージを追記
+        service.spreadsheets().values().append(
+            spreadsheetId=os.environ.get("SPREADSHEET_ID"),
+            range="LINE_Queue!A1",
+            valueInputOption="USER_ENTERED",
+            body={'values': [[msg_text]]}
+        ).execute()
+
+    # LINEに直接送る代わりに、上の関数を使ってスプレッドシートへ送信予約
+    queue_line_message(msg.strip())
+    # ---------------------------------------------------------
+    # ▲▲▲ ここまで差し替え ▲▲▲
+    # ---------------------------------------------------------
+    
+    # ログの文言だけ「キュー登録」と少し変えておくと分かりやすいです
+    logger.info(f"V9買い目送信完了(キュー登録): 買い目計{len(buys_all)}件")
 
 def main():
     logger.info("🚀 V9 System Start (LambdaRank Hybrid Edition)")
