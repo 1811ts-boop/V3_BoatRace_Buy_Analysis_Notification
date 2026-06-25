@@ -880,7 +880,7 @@ def main():
         logger.info("データ取得不可（開催なし、またはメンテ）")
         return
         
-    s1, s2 = transform_for_v9_inference(df, dtide, dict_motor, dict_boat)
+    s1, s2 = transform_for_v11_inference(df, dtide, dict_motor, dict_boat)
     if not s1.empty and not s2.empty:
         run_v10_inference_and_notify(s1, s2) # V10用に変更
         
