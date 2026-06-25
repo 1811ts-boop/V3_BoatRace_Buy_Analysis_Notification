@@ -2,7 +2,7 @@ name: V12 Daily AI
 on:
   workflow_dispatch:
   schedule:
-    - cron: '20 22 * * *' # 日本時間 7:20 (UTC 22:20)
+    - cron: '30 21 * * *' # 日本時間 6:30 (UTC 21:30)
 jobs:
   run-inference:
     runs-on: ubuntu-latest
