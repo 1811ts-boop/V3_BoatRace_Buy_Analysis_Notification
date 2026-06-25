@@ -588,15 +588,18 @@ def calculate_probabilities(scores):
     return p_2tan, p_2fuku
 
 def run_v11_inference_and_notify(df_s1, df_s2):
-    # 💡 [過学習排除版] LINE通知用のV11厳選お宝条件リスト
+    # 💡 [6/24最新版] LINE通知用のV11厳選お宝条件リスト
     V11_TREASURES = [
-        {'type': '2tan',  'prob_cat': 0.05, 'multi': 5, 'places': ["児島", "宮島", "蒲郡"]},
-        {'type': '2tan',  'prob_cat': 0.15, 'multi': 5, 'places': ["児島", "唐津"]},
-        {'type': '2tan',  'prob_cat': 0.30, 'multi': 3, 'places': ["津", "常滑"]},
-        {'type': '2fuku', 'prob_cat': 0.25, 'multi': 1, 'places': ["唐津", "多摩川", "浜名湖"]},
-        {'type': '2fuku', 'prob_cat': 0.30, 'multi': 1, 'places': ["大村", "徳山", "尼崎"]},
+        {'type': '2tan',  'prob_cat': 0.05, 'multi': 5, 'places': ["児島", "宮島", "平和島"]},
+        {'type': '2tan',  'prob_cat': 0.15, 'multi': 5, 'places': ["児島", "唐津", "平和島", "蒲郡"]},
+        {'type': '2fuku', 'prob_cat': 0.15, 'multi': 5, 'places': ["児島", "唐津"]},
+        {'type': '2tan',  'prob_cat': 0.30, 'multi': 3, 'places': ["常滑", "津"]},
+        {'type': '2fuku', 'prob_cat': 0.15, 'multi': 1, 'places': ["唐津", "多摩川", "浜名湖"]},
         {'type': '2fuku', 'prob_cat': 0.20, 'multi': 1, 'places': ["唐津", "大村", "浜名湖"]},
-        {'type': '2tan',  'prob_cat': 0.25, 'multi': 1, 'places': ["徳山", "大村", "児島"]},
+        {'type': '2fuku', 'prob_cat': 0.25, 'multi': 1, 'places': ["唐津", "多摩川", "浜名湖"]},
+        {'type': '2fuku', 'prob_cat': 0.30, 'multi': 1, 'places': ["大村", "徳山"]},
+        {'type': '2fuku', 'prob_cat': 0.35, 'multi': 1, 'places': ["住之江", "児島", "尼崎", "浜名湖"]},
+        {'type': '2tan',  'prob_cat': 0.25, 'multi': 1, 'places': ["児島", "大村", "徳山"]},
     ]
 
     current_month = TODAY_OBJ.month
