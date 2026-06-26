@@ -790,7 +790,8 @@ def run_v11_inference_and_notify(df_s1, df_s2):
     for b in buys_all:
         prob_cat = round(b['raw_prob'] * 20) / 20.0
         for t in V11_TREASURES:
-            if t['type'] == b['k_type'] and abs(t['prob_cat'] - prob_cat) < 0.01 and b['place'] in t['places']:
+            # 💡 【微修正】t['multi'] == b['multi'] を追加し、抽出条件を完全一致化
+            if t['type'] == b['k_type'] and abs(t['prob_cat'] - prob_cat) < 0.01 and b['place'] in t['places'] and t['multi'] == b['multi']:
                 line_targets.append(b)
                 break
 
@@ -857,8 +858,8 @@ def run_v11_inference_and_notify(df_s1, df_s2):
     # LINEに直接送る代わりに、上の関数を使ってスプレッドシートへ送信予約
     queue_line_message(msg.strip())
     
-    # ログの文言だけ「キュー登録」と少し変えておくと分かりやすいです
-    logger.info(f"V10買い目送信完了(キュー登録): 買い目計{len(buys_all)}件")
+    # 💡 修正箇所②: ログの文言を V10 -> V11 に変更
+    logger.info(f"V11買い目送信完了(キュー登録): 買い目計{len(buys_all)}件")
     # ---------------------------------------------------------
     # ▲▲▲ ここまで差し替え ▲▲▲
     # ---------------------------------------------------------
@@ -882,7 +883,8 @@ def main():
         
     s1, s2 = transform_for_v11_inference(df, dtide, dict_motor, dict_boat)
     if not s1.empty and not s2.empty:
-        run_v10_inference_and_notify(s1, s2) # V10用に変更
+        # 💡 修正箇所③: v10 -> v11 に変更（これでNameErrorが完全に解消します）
+        run_v11_inference_and_notify(s1, s2)
         
     logger.info("Daily Job Completed.")
 
