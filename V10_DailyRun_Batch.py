@@ -821,7 +821,8 @@ def run_v10_inference_and_notify(df_s1, df_s2):
     for b in buys_all:
         prob_cat = round(b['raw_prob'] * 20) / 20.0
         for t in V10_TREASURES:
-            if t['type'] == b['k_type'] and abs(t['prob_cat'] - prob_cat) < 0.01 and b['place'] in t['places']:
+            # 💡 【微修正】t['multi'] == b['multi'] を追加し、抽出条件を完全一致化
+            if t['type'] == b['k_type'] and abs(t['prob_cat'] - prob_cat) < 0.01 and b['place'] in t['places'] and t['multi'] == b['multi']:
                 line_targets.append(b)
                 break
 
