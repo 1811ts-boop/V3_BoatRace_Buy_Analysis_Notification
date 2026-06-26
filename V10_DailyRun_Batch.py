@@ -26,7 +26,7 @@ warnings.filterwarnings("ignore")
 # =============================================================================
 # 1. 環境設定・定数
 # =============================================================================
-logger = logging.getLogger("V9_DailyRun_LambdaRank")
+logger = logging.getLogger("V10_DailyRun_ConditionalProb")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     sh = logging.StreamHandler()
