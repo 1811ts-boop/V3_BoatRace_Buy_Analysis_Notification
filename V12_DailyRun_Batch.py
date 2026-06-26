@@ -910,13 +910,13 @@ def run_v12_inference_and_notify(df_s1, df_s2):
     queue_line_message(msg.strip())
     
     # ログの文言だけ「キュー登録」と少し変えておくと分かりやすいです
-    logger.info(f"V10買い目送信完了(キュー登録): 買い目計{len(buys_all)}件")
+    logger.info(f"V12買い目送信完了(キュー登録): 買い目計{len(buys_all)}件")
     # ---------------------------------------------------------
     # ▲▲▲ ここまで差し替え ▲▲▲
     # ---------------------------------------------------------
 
 def main():
-    logger.info("🚀 V12 System Start (Conditional Probability Edition)")
+    logger.info("🚀 V12 System Start (Macro-Threat Edition)")
     
     # 💡 GitHub Actions環境の場合のみ、Driveから必須ファイルを一式ダウンロード
     if os.environ.get("GITHUB_ACTIONS") == "true":
@@ -932,9 +932,12 @@ def main():
         logger.info("データ取得不可（開催なし、またはメンテ）")
         return
         
-    s1, s2 = transform_for_v9_inference(df, dtide, dict_motor, dict_boat)
+    # 💡 修正1: v9 -> v12 に変更
+    s1, s2 = transform_for_v12_inference(df, dtide, dict_motor, dict_boat)
+    
     if not s1.empty and not s2.empty:
-        run_v10_inference_and_notify(s1, s2) # V10用に変更
+        # 💡 修正2: v10 -> v12 に変更
+        run_v12_inference_and_notify(s1, s2)
         
     logger.info("Daily Job Completed.")
 
